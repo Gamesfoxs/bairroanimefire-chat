@@ -8,6 +8,7 @@ const { Server } = require('socket.io');
 
 const { init } = require('./src/db');
 const { createAuthRouter } = require('./src/routes/auth');
+const { createSsoRouter } = require('./src/routes/sso');
 const { createServersRouter } = require('./src/routes/servers');
 const { createFriendsRouter } = require('./src/routes/friends');
 const { createDmsRouter } = require('./src/routes/dms');
@@ -24,9 +25,14 @@ async function main() {
     cors: { origin: true, credentials: true },
   });
 
+  app.set('trust proxy', 1);
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
+
+  // SSO before static/SPA so /auth/sso/* is never swallowed
+  app.use('/auth/sso', createSsoRouter(db));
+
   app.use(express.static(path.join(__dirname, 'public')));
 
   app.get('/api/health', (_req, res) => {
@@ -42,7 +48,9 @@ async function main() {
 
   // SPA fallback (Express 5)
   app.get('/{*path}', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io')) return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/socket.io') || req.path.startsWith('/auth/sso')) {
+      return next();
+    }
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   });
 

@@ -20,26 +20,9 @@
       <div class="auth-logo">🔥</div>
       <h1>Bairro Anime Fire</h1>
       <p class="auth-sub">Chat em tempo real com a galera</p>
-      <div class="auth-tabs">
-        <button type="button" class="auth-tab active" data-tab="login">Entrar</button>
-        <button type="button" class="auth-tab" data-tab="register">Criar conta</button>
-      </div>
-      <form id="auth-form">
-        <label>
-          Usuário
-          <input id="auth-username" name="username" autocomplete="username" required minlength="3" maxlength="20" placeholder="seu_nick" />
-        </label>
-        <label id="display-name-wrap" class="hidden">
-          Nome de exibição
-          <input id="auth-display" name="displayName" maxlength="32" placeholder="Como quer aparecer" />
-        </label>
-        <label>
-          Senha
-          <input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="4" placeholder="••••••••" />
-        </label>
-        <p id="auth-error" class="auth-error" hidden></p>
-        <button type="submit" class="btn-primary" id="auth-submit">Entrar</button>
-      </form>
+      <p id="auth-error" class="auth-error" hidden></p>
+      <a class="btn-primary btn-sso" id="btn-sso" href="/auth/sso/start">Entrar com BairroAnimeFire</a>
+      <p class="auth-hint">Usa a mesma conta do site principal. Sem senha separada.</p>
     </div>
   </div>
 

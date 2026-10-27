@@ -524,3 +524,17 @@ ul { list-style: none; }
   .sidebar.open { transform: translateX(0); }
   .auth-card { padding: 24px 18px; }
 }
+
+.btn-sso {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  margin-top: 8px;
+}
+.auth-hint {
+  margin-top: 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}

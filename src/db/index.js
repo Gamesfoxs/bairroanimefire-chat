@@ -148,6 +148,20 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_dm_messages ON dm_messages(dm_channel_id, created_at);
   `);
 
+  // SSO columns (idempotent)
+  try {
+    const cols = all(`PRAGMA table_info(users)`).map((c) => c.name);
+    if (!cols.includes('production_user_id')) {
+      run(`ALTER TABLE users ADD COLUMN production_user_id INTEGER`);
+    }
+    if (!cols.includes('source_role')) {
+      run(`ALTER TABLE users ADD COLUMN source_role TEXT`);
+    }
+    exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_production_user_id ON users(production_user_id)`);
+  } catch (e) {
+    console.warn('SSO user migration warning:', e.message);
+  }
+
   // Seed servidor padrão se não existir
   const existing = get(`SELECT id FROM servers WHERE name = ?`, ['Bairro Anime Fire']);
   if (!existing) {

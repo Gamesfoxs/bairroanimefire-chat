@@ -62,47 +62,28 @@
     }
   }
 
-  // ---------- Auth UI ----------
-  let authMode = 'login';
-
-  function setAuthMode(mode) {
-    authMode = mode;
-    $$('.auth-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === mode));
-    $('#display-name-wrap').classList.toggle('hidden', mode !== 'register');
-    $('#auth-submit').textContent = mode === 'login' ? 'Entrar' : 'Criar conta';
-    $('#auth-error').hidden = true;
-  }
-
-  $$('.auth-tab').forEach((btn) => {
-    btn.addEventListener('click', () => setAuthMode(btn.dataset.tab));
-  });
-
-  $('#auth-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const username = $('#auth-username').value.trim();
-    const password = $('#auth-password').value;
-    const displayName = $('#auth-display').value.trim();
-    const errEl = $('#auth-error');
-    const btn = $('#auth-submit');
-    errEl.hidden = true;
-    btn.disabled = true;
-    try {
-      const path = authMode === 'login' ? '/auth/login' : '/auth/register';
-      const body = authMode === 'login'
-        ? { username, password }
-        : { username, password, displayName };
-      const data = await api(path, { method: 'POST', body: JSON.stringify(body) });
-      state.token = data.token;
-      state.user = data.user;
-      localStorage.setItem('baf_token', data.token);
-      await bootApp();
-    } catch (err) {
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-    } finally {
-      btn.disabled = false;
+  // ---------- Auth UI (SSO only) ----------
+  (function showSsoError() {
+    const params = new URLSearchParams(location.search);
+    const err = params.get('sso_error');
+    const ok = params.get('sso');
+    if (err || ok) {
+      const clean = location.pathname;
+      history.replaceState({}, '', clean);
     }
-  });
+    if (err) {
+      const map = {
+        state_invalid: 'Login cancelado ou inválido. Tenta de novo.',
+        state_expired: 'Demorou demais. Clica em Entrar de novo.',
+        exchange_denied: 'O site principal não liberou o login.',
+        callback_failed: 'Falha no login. Tenta de novo.',
+        sso_unavailable: 'SSO fora do ar. Tenta daqui a pouco.',
+      };
+      const el = $('#auth-error');
+      el.textContent = map[err] || 'Não deu pra entrar. Tenta de novo.';
+      el.hidden = false;
+    }
+  })();
 
   $('#btn-logout').addEventListener('click', async () => {
     try { await api('/auth/logout', { method: 'POST' }); } catch {}
@@ -119,6 +100,7 @@
     if (state.socket) state.socket.disconnect();
     state.socket = io({
       auth: { token: state.token },
+      withCredentials: true,
       transports: ['websocket', 'polling'],
     });
 
@@ -631,14 +613,18 @@
 
   // ---------- Init ----------
   async function init() {
-    if (!state.token) return;
     try {
-      const { user } = await api('/auth/me');
-      state.user = user;
+      const data = await api('/auth/me');
+      state.user = data.user;
+      if (data.token) {
+        state.token = data.token;
+        localStorage.setItem('baf_token', data.token);
+      }
       await bootApp();
     } catch {
       localStorage.removeItem('baf_token');
       state.token = null;
+      state.user = null;
     }
   }
 
