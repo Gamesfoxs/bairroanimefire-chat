@@ -129,6 +129,12 @@ ul { list-style: none; }
   height: 100dvh;
 }
 
+/* Home: the members list is hidden, so don't reserve an empty right column. */
+.app:has(> .members.hidden) {
+  grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr);
+}
+.chat-main { min-width: 0; }
+
 /* Server rail */
 .server-rail {
   background: var(--bg-rail);
@@ -397,7 +403,9 @@ ul { list-style: none; }
   padding: 16px;
 }
 .home-card h3 { font-size: 0.95rem; margin-bottom: 12px; }
-.inline-form { display: flex; gap: 8px; }
+.inline-form { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.inline-form > input { min-width: 130px; }
+.inline-form > .btn-primary { flex-shrink: 0; }
 .inline-form input {
   flex: 1;
   padding: 10px 12px;
@@ -489,7 +497,7 @@ ul { list-style: none; }
 /* Responsive */
 @media (max-width: 900px) {
   .app {
-    grid-template-columns: var(--rail-w) var(--sidebar-w) 1fr;
+    grid-template-columns: var(--rail-w) var(--sidebar-w) minmax(0, 1fr);
   }
   .members {
     position: fixed;
@@ -508,7 +516,7 @@ ul { list-style: none; }
 
 @media (max-width: 640px) {
   .app {
-    grid-template-columns: var(--rail-w) 1fr;
+    grid-template-columns: var(--rail-w) minmax(0, 1fr);
   }
   .sidebar {
     position: fixed;
@@ -537,4 +545,11 @@ ul { list-style: none; }
   color: var(--text-muted);
   font-size: 0.85rem;
   line-height: 1.4;
+}
+
+/* Narrow cards: keep the friend action accessible without horizontal clipping. */
+@media (max-width: 420px) {
+  .home-view { padding: 20px 14px; }
+  .home-cards { grid-template-columns: minmax(0, 1fr); }
+  .inline-form > input { min-width: 0; flex-basis: 100%; }
 }
