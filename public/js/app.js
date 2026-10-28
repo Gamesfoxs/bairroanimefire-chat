@@ -5,7 +5,7 @@
   const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
   const state = {
-    token: localStorage.getItem('baf_token') || null,
+    token: null, // SSO uses the HttpOnly session cookie; never override it with stale local storage
     user: null,
     socket: null,
     servers: [],
@@ -25,7 +25,8 @@
   // ---------- API ----------
   async function api(path, opts = {}) {
     const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
-    if (state.token) headers.Authorization = `Bearer ${state.token}`;
+    // The SSO cookie is the authoritative credential for browser requests.
+    // A legacy Bearer token in localStorage can be expired and override a valid cookie.
     const res = await fetch(`/api${path}`, { ...opts, headers, credentials: 'same-origin' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
@@ -99,7 +100,7 @@
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
     state.socket = io({
-      auth: { token: state.token },
+      auth: {}, // Socket.IO authenticates using the same HttpOnly SSO cookie
       withCredentials: true,
       transports: ['websocket', 'polling'],
     });
@@ -616,10 +617,8 @@
     try {
       const data = await api('/auth/me');
       state.user = data.user;
-      if (data.token) {
-        state.token = data.token;
-        localStorage.setItem('baf_token', data.token);
-      }
+      // Remove legacy credentials so they cannot shadow the SSO session.
+      localStorage.removeItem('baf_token');
       await bootApp();
     } catch {
       localStorage.removeItem('baf_token');
