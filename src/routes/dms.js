@@ -38,12 +38,24 @@ function createDmsRouter(db) {
     );
     if (!peer) return res.status(404).json({ error: 'Usuário não encontrado' });
 
+    // DMs only between confirmed friends or members of the same private server.
+    const friend = db.get(`SELECT 1 FROM friendships WHERE status = 'accepted'
+      AND ((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))`,
+      [req.user.id, peerId, peerId, req.user.id]);
+    const guildMate = db.get(`SELECT 1 FROM server_members a
+      JOIN server_members b ON b.server_id = a.server_id
+      JOIN servers s ON s.id = a.server_id
+      WHERE a.user_id = ? AND b.user_id = ? AND s.name != 'Bairro Anime Fire'`,
+      [req.user.id, peerId]);
     const [u1, u2] = orderedPair(req.user.id, peerId);
     let channel = db.get(
       `SELECT * FROM dm_channels WHERE user1_id = ? AND user2_id = ?`,
       [u1, u2]
     );
     if (!channel) {
+      if (!friend && !guildMate) {
+        return res.status(403).json({ error: 'Só é possível iniciar DMs com amigos ou membros do seu servidor privado' });
+      }
       const id = uuidv4();
       db.run(
         `INSERT INTO dm_channels (id, user1_id, user2_id) VALUES (?, ?, ?)`,

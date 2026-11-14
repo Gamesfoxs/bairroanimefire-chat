@@ -5,7 +5,7 @@
   const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
   const state = {
-    token: localStorage.getItem('baf_token') || null,
+    token: null, // Session stays in secure HttpOnly cookie; never store JWT in localStorage.
     user: null,
     socket: null,
     servers: [],
@@ -20,6 +20,11 @@
     activeChannelId: null,
     activeDmId: null,
     typingTimer: null,
+    voiceChannelId: null,
+    localStream: null,
+    voicePeers: new Map(),
+    voiceParticipants: new Map(),
+    pendingInvite: new URLSearchParams(location.search).get('invite') || localStorage.getItem('baf_chat_invite'),
   };
 
   // ---------- API ----------
@@ -62,6 +67,9 @@
     }
   }
 
+  if (state.pendingInvite) localStorage.setItem('baf_chat_invite', state.pendingInvite);
+  localStorage.removeItem('baf_token');
+
   // ---------- Auth UI (SSO only) ----------
   (function showSsoError() {
     const params = new URLSearchParams(location.search);
@@ -90,6 +98,7 @@
     localStorage.removeItem('baf_token');
     state.token = null;
     state.user = null;
+    leaveVoice();
     if (state.socket) { state.socket.disconnect(); state.socket = null; }
     $('#app').classList.add('hidden');
     $('#auth-screen').classList.remove('hidden');
@@ -99,12 +108,18 @@
   function connectSocket() {
     if (state.socket) state.socket.disconnect();
     state.socket = io({
-      auth: { token: state.token },
+      auth: {}, // WebSocket authenticates using same-origin HttpOnly session cookie.
       withCredentials: true,
       transports: ['websocket', 'polling'],
     });
 
     state.socket.on('connect', () => {
+      if (state.voiceChannelId && state.localStream) {
+        for (const p of state.voicePeers.values()) p.close();
+        state.voicePeers.clear();
+        state.voiceParticipants.clear();
+        joinVoiceSocket().catch(err => toast(err.message));
+      }
       if (state.activeChannelId) {
         state.socket.emit('channel:join', { channelId: state.activeChannelId });
       }
@@ -151,8 +166,25 @@
       el._t = setTimeout(() => { el.hidden = true; }, 2500);
     });
 
+    state.socket.on('voice:peer-joined', ({ channelId, socketId, userId, username }) => {
+      if (channelId !== state.voiceChannelId || !state.localStream) return;
+      state.voiceParticipants.set(socketId, { userId, username });
+      renderVoiceParticipants();
+    });
+    state.socket.on('voice:peer-left', ({ channelId, socketId }) => {
+      if (channelId !== state.voiceChannelId) return;
+      closeVoicePeer(socketId);
+      state.voiceParticipants.delete(socketId);
+      renderVoiceParticipants();
+    });
+    state.socket.on('voice:signal', (payload) => {
+      if (payload?.channelId === state.voiceChannelId && state.localStream) {
+        handleVoiceSignal(payload).catch(() => toast('Falha na conexão de voz. Tente sair e entrar.'));
+      }
+    });
     state.socket.on('connect_error', (err) => {
       console.warn('socket', err.message);
+      toast('Conexão do chat indisponível');
     });
   }
 
@@ -166,6 +198,7 @@
     await loadFriends();
     await loadDms();
     showHome();
+    await handlePendingInvite();
   }
 
   function updateMePanel() {
@@ -223,6 +256,45 @@
     showHome();
   });
 
+  $('#join-invite-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = $('#invite-code').value.trim();
+    const code = extractInviteCode(raw);
+    if (!code) return toast('Cole um convite válido');
+    try {
+      await joinInvite(code);
+      $('#invite-code').value = '';
+    } catch (err) { toast(err.message); }
+  });
+
+  function extractInviteCode(raw) {
+    try { raw = new URL(raw).searchParams.get('invite') || ''; } catch {}
+    return /^[A-Za-z0-9_-]{20,40}$/.test(raw) ? raw : null;
+  }
+  async function joinInvite(code) {
+    const { server_id, server_name } = await api('/servers/invites/join', {
+      method: 'POST', body: JSON.stringify({ code })
+    });
+    localStorage.removeItem('baf_chat_invite');
+    state.pendingInvite = null;
+    await loadServers();
+    toast('Você entrou em ' + server_name + '!');
+    await openServer(server_id);
+  }
+  async function handlePendingInvite() {
+    const code = extractInviteCode(state.pendingInvite || '');
+    if (!code) return;
+    $('#invite-code').value = code;
+    try {
+      const { invite } = await api('/servers/invites/' + encodeURIComponent(code));
+      if (confirm('Entrar na sala privada "' + invite.name + '"?')) await joinInvite(code);
+    } catch (err) {
+      localStorage.removeItem('baf_chat_invite');
+      state.pendingInvite = null;
+      toast(err.message);
+    }
+  }
+
   $('#btn-add-server').addEventListener('click', async () => {
     const name = prompt('Nome do novo servidor:');
     if (!name || !name.trim()) return;
@@ -236,6 +308,7 @@
   });
 
   async function openServer(serverId) {
+    leaveVoice();
     state.activeServerId = serverId;
     state.view = 'channel';
     $('#btn-home').classList.remove('active');
@@ -254,38 +327,80 @@
     renderMembers();
     $('#members-panel').classList.remove('hidden');
 
-    if (channels.length) {
-      await openChannel(channels[0].id);
-    }
+    const firstText = channels.find(c => c.type === 'text');
+    if (firstText) await openChannel(firstText.id);
+    else if (channels.length) await openVoiceChannel(channels[0].id);
     closeMobilePanels();
   }
 
   function renderChannelSidebar() {
     const body = $('#sidebar-body');
     body.innerHTML = '';
-
-    const section = document.createElement('div');
-    section.className = 'nav-section';
-    section.innerHTML = `<div class="nav-section-title">Canais de texto</div>`;
-    for (const ch of state.channels) {
-      const btn = document.createElement('button');
-      btn.className = 'nav-item' + (ch.id === state.activeChannelId ? ' active' : '');
-      btn.innerHTML = `<span class="hash">#</span> ${escapeHtml(ch.name)}`;
-      btn.addEventListener('click', () => openChannel(ch.id));
-      section.appendChild(btn);
+    const server = state.servers.find(s => s.id === state.activeServerId);
+    if (server && server.owner_id === state.user.id) {
+      const tools = document.createElement('div');
+      tools.className = 'channel-toolbar';
+      const invite = document.createElement('button');
+      invite.textContent = '🔗 Convidar amigos';
+      invite.addEventListener('click', async () => {
+        try {
+          const { invite } = await api('/servers/' + server.id + '/invites', { method: 'POST' });
+          try {
+            await navigator.clipboard.writeText(invite.url);
+            toast('Link privado copiado! Envie no grupo da guilda.');
+          } catch {
+            prompt('Copie o link privado:', invite.url);
+          }
+        } catch (err) { toast(err.message); }
+      });
+      const add = document.createElement('button');
+      add.textContent = '＋ Criar canal';
+      add.addEventListener('click', async () => {
+        const name = prompt('Nome do canal (sem espaços):');
+        if (!name || !name.trim()) return;
+        const type = confirm('Canal de VOZ? (Cancelar = texto)') ? 'voice' : 'text';
+        try {
+          await api('/servers/' + server.id + '/channels', {
+            method: 'POST', body: JSON.stringify({ name, type })
+          });
+          const data = await api('/servers/' + server.id + '/channels');
+          state.channels = data.channels;
+          renderChannelSidebar();
+          toast('Canal criado!');
+        } catch (err) { toast(err.message); }
+      });
+      tools.append(invite, add);
+      body.appendChild(tools);
     }
-    body.appendChild(section);
-
-    // DMs quick list
+    for (const type of ['text', 'voice']) {
+      const channels = state.channels.filter(ch => (ch.type || 'text') === type);
+      if (!channels.length) continue;
+      const section = document.createElement('div');
+      section.className = 'nav-section';
+      const title = document.createElement('div');
+      title.className = 'nav-section-title';
+      title.textContent = type === 'voice' ? 'Canais de voz' : 'Canais de texto';
+      section.appendChild(title);
+      for (const ch of channels) {
+        const btn = document.createElement('button');
+        const active = type === 'voice' ? state.view === 'voice' && ch.id === state.voiceChannelId : state.view === 'channel' && ch.id === state.activeChannelId;
+        btn.className = 'nav-item' + (type === 'voice' ? ' voice-channel' : '') + (active ? ' active' : '');
+        btn.textContent = (type === 'voice' ? '🔊 ' : '# ') + ch.name;
+        btn.addEventListener('click', () => type === 'voice' ? openVoiceChannel(ch.id) : openChannel(ch.id));
+        section.appendChild(btn);
+      }
+      body.appendChild(section);
+    }
     if (state.dms.length) {
       const dmSec = document.createElement('div');
       dmSec.className = 'nav-section';
-      dmSec.innerHTML = `<div class="nav-section-title">Mensagens diretas</div>`;
+      dmSec.innerHTML = '<div class="nav-section-title">Mensagens diretas</div>';
       for (const dm of state.dms) {
         const btn = document.createElement('button');
         btn.className = 'nav-item' + (dm.id === state.activeDmId ? ' active' : '');
-        const online = state.online.has(dm.peer_id);
-        btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${online ? 'var(--online)' : 'var(--offline)'}"></span> ${escapeHtml(dm.peer_display_name || dm.peer_username)}`;
+        const dot = document.createElement('span');
+        dot.textContent = state.online.has(dm.peer_id) ? '🟢 ' : '⚪ ';
+        btn.append(dot, document.createTextNode(dm.peer_display_name || dm.peer_username));
         btn.addEventListener('click', () => openDm(dm.id, dm));
         dmSec.appendChild(btn);
       }
@@ -318,6 +433,8 @@
   }
 
   async function openChannel(channelId) {
+    leaveVoice();
+    if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
     if (state.activeChannelId && state.socket) {
       state.socket.emit('channel:leave', { channelId: state.activeChannelId });
     }
@@ -341,6 +458,8 @@
   }
 
   async function openDm(dmId, meta) {
+    leaveVoice();
+    if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
     if (state.activeChannelId && state.socket) {
       state.socket.emit('channel:leave', { channelId: state.activeChannelId });
     }
@@ -377,12 +496,16 @@
   }
 
   function showHome() {
+    leaveVoice();
+    if (state.activeChannelId && state.socket) state.socket.emit('channel:leave', { channelId: state.activeChannelId });
+    if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
     state.view = 'home';
     state.activeChannelId = null;
     state.activeDmId = null;
     state.activeServerId = null;
     $('#sidebar-title').textContent = 'Amigos';
     $('#home-view').classList.remove('hidden');
+    $('#voice-view').classList.add('hidden');
     $('#messages').classList.add('hidden');
     $('#composer').hidden = true;
     $('#typing').hidden = true;
@@ -438,6 +561,7 @@
   }
 
   function showChatView() {
+    $('#voice-view').classList.add('hidden');
     $('#home-view').classList.add('hidden');
     $('#messages').classList.remove('hidden');
     $('#chat-hash').hidden = false;
@@ -597,6 +721,199 @@
     }, 200);
   });
 
+
+  // ---------- Private WebRTC voice (small guild rooms) ----------
+  async function openVoiceChannel(channelId) {
+    if (state.voiceChannelId !== channelId) leaveVoice();
+    if (state.activeChannelId && state.socket) state.socket.emit('channel:leave', { channelId: state.activeChannelId });
+    if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
+    state.activeChannelId = null;
+    state.activeDmId = null;
+    state.view = 'voice';
+    state.voiceChannelId = channelId;
+    const ch = state.channels.find(c => c.id === channelId);
+    $('#chat-title').textContent = '🔊 ' + (ch?.name || 'Voz');
+    $('#chat-hash').hidden = true;
+    $('#composer').hidden = true;
+    $('#messages').classList.add('hidden');
+    $('#home-view').classList.add('hidden');
+    $('#voice-view').classList.remove('hidden');
+    $('#voice-title').textContent = '🔊 ' + (ch?.name || 'Voz');
+    $('#voice-join').classList.toggle('hidden', !!state.localStream);
+    $('#voice-leave').classList.toggle('hidden', !state.localStream);
+    $('#voice-mute').classList.toggle('hidden', !state.localStream);
+    $('#voice-status').textContent = state.localStream ? 'Conectado à sala de voz' : 'Seu microfone está desligado';
+    renderVoiceParticipants();
+    renderChannelSidebar();
+    closeMobilePanels();
+  }
+
+  function renderVoiceParticipants() {
+    const list = $('#voice-peers');
+    list.innerHTML = '';
+    if (!state.localStream) return;
+    const mine = document.createElement('li');
+    mine.textContent = '🎙️ Você';
+    list.appendChild(mine);
+    for (const p of state.voiceParticipants.values()) {
+      const li = document.createElement('li');
+      li.textContent = '🎧 ' + (p.username || 'Participante');
+      list.appendChild(li);
+    }
+    $('#voice-status').textContent = 'Conectado • ' + (1 + state.voiceParticipants.size) + ' pessoa(s) na voz';
+  }
+
+  function closeVoicePeer(socketId) {
+    const pc = state.voicePeers.get(socketId);
+    if (pc) pc.close();
+    state.voicePeers.delete(socketId);
+    const el = document.getElementById('voice-audio-' + socketId);
+    if (el) { el.srcObject = null; el.remove(); }
+  }
+
+  function createVoicePeer(socketId) {
+    if (state.voicePeers.has(socketId)) return state.voicePeers.get(socketId);
+    if (!state.localStream) throw new Error('Microfone não autorizado');
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
+    });
+    pc._pendingIce = [];
+    for (const track of state.localStream.getTracks()) pc.addTrack(track, state.localStream);
+    pc.onicecandidate = event => {
+      if (event.candidate && state.socket?.connected && state.voiceChannelId) {
+        state.socket.emit('voice:signal', {
+          channelId: state.voiceChannelId, to: socketId, type: 'ice', candidate: event.candidate.toJSON()
+        });
+      }
+    };
+    pc.ontrack = event => {
+      let audio = document.getElementById('voice-audio-' + socketId);
+      if (!audio) {
+        audio = document.createElement('audio');
+        audio.id = 'voice-audio-' + socketId;
+        audio.autoplay = true;
+        audio.playsInline = true;
+        $('#voice-audio').appendChild(audio);
+      }
+      audio.srcObject = event.streams[0] || new MediaStream([event.track]);
+      audio.play().catch(() => {
+        $('#voice-status').textContent = 'Toque na tela para liberar o som';
+      });
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        $('#voice-status').textContent = 'Falha de conexão de voz com participante. Tente entrar novamente.';
+      }
+    };
+    state.voicePeers.set(socketId, pc);
+    return pc;
+  }
+
+  async function offerVoiceTo(socketId) {
+    const pc = createVoicePeer(socketId);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    state.socket.emit('voice:signal', {
+      channelId: state.voiceChannelId, to: socketId, type: 'offer', sdp: pc.localDescription.sdp
+    });
+  }
+
+  async function handleVoiceSignal({ from, type, sdp, candidate }) {
+    if (!from || !state.localStream) return;
+    const pc = createVoicePeer(from);
+    if (type === 'ice') {
+      if (!candidate) return;
+      if (pc.remoteDescription) await pc.addIceCandidate(candidate);
+      else pc._pendingIce.push(candidate);
+      return;
+    }
+    if (type === 'offer') {
+      await pc.setRemoteDescription({ type: 'offer', sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      state.socket.emit('voice:signal', {
+        channelId: state.voiceChannelId, to: from, type: 'answer', sdp: pc.localDescription.sdp
+      });
+    } else if (type === 'answer' && pc.signalingState === 'have-local-offer') {
+      await pc.setRemoteDescription({ type: 'answer', sdp });
+    }
+    if (pc.remoteDescription && pc._pendingIce?.length) {
+      for (const c of pc._pendingIce.splice(0)) await pc.addIceCandidate(c);
+    }
+  }
+
+  async function joinVoiceSocket() {
+    if (!state.socket?.connected) throw new Error('Chat desconectado. Tente novamente.');
+    const channelId = state.voiceChannelId;
+    const result = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('A sala de voz não respondeu')), 12000);
+      state.socket.emit('voice:join', { channelId }, ack => {
+        clearTimeout(timer);
+        if (ack?.error) reject(new Error(ack.error));
+        else if (ack?.ok) resolve(ack);
+        else reject(new Error('Não foi possível entrar na voz'));
+      });
+    });
+    if (state.voiceChannelId !== channelId || !state.localStream) return;
+    for (const peer of result.peers || []) {
+      state.voiceParticipants.set(peer.socketId, peer);
+      offerVoiceTo(peer.socketId).catch(() => toast('Não conectou a um participante'));
+    }
+    renderVoiceParticipants();
+  }
+
+  async function startVoice() {
+    if (!state.voiceChannelId || state.localStream) return;
+    if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) {
+      return toast('Este navegador não permite chamadas de voz');
+    }
+    $('#voice-status').textContent = 'Solicitando acesso ao microfone…';
+    try {
+      state.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false
+      });
+      await joinVoiceSocket();
+      $('#voice-join').classList.add('hidden');
+      $('#voice-leave').classList.remove('hidden');
+      $('#voice-mute').classList.remove('hidden');
+      $('#voice-mute').textContent = '🔇 Silenciar';
+      renderVoiceParticipants();
+    } catch (err) {
+      leaveVoice(false);
+      $('#voice-status').textContent = 'Microfone desligado — ' + err.message;
+      toast('Voz: ' + err.message);
+    }
+  }
+
+  function leaveVoice(resetView = true) {
+    if (state.voiceChannelId && state.socket && state.localStream) {
+      state.socket.emit('voice:leave', { channelId: state.voiceChannelId });
+    }
+    for (const id of [...state.voicePeers.keys()]) closeVoicePeer(id);
+    state.voiceParticipants.clear();
+    if (state.localStream) {
+      for (const track of state.localStream.getTracks()) track.stop();
+      state.localStream = null;
+    }
+    $('#voice-audio').replaceChildren();
+    $('#voice-join').classList.remove('hidden');
+    $('#voice-mute').classList.add('hidden');
+    $('#voice-leave').classList.add('hidden');
+    if (resetView) state.voiceChannelId = null;
+    if (state.view === 'voice') $('#voice-status').textContent = 'Microfone desligado';
+  }
+
+  $('#voice-join').addEventListener('click', startVoice);
+  $('#voice-leave').addEventListener('click', () => leaveVoice(false));
+  $('#voice-mute').addEventListener('click', () => {
+    if (!state.localStream) return;
+    const track = state.localStream.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    $('#voice-mute').textContent = track.enabled ? '🔇 Silenciar' : '🎙️ Ativar microfone';
+  });
+
   // ---------- Mobile ----------
   $('#btn-toggle-sidebar').addEventListener('click', () => {
     $('#sidebar').classList.toggle('open');
@@ -616,10 +933,6 @@
     try {
       const data = await api('/auth/me');
       state.user = data.user;
-      if (data.token) {
-        state.token = data.token;
-        localStorage.setItem('baf_token', data.token);
-      }
       await bootApp();
     } catch {
       localStorage.removeItem('baf_token');

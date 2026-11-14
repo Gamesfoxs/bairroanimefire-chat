@@ -38,7 +38,7 @@ function createAuthRouter(db) {
       maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/',
     });
-    res.json({ user: row, token });
+    res.json({ user: row }); // Token is only sent as an HttpOnly cookie.
   });
 
   return router;

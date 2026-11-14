@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Bairro Anime Fire</title>
-  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/style.css?v=20261114" />
 </head>
 <body>
   <!-- Auth -->
@@ -79,6 +79,14 @@
             <p id="friend-msg" class="hint"></p>
           </div>
           <div class="home-card">
+            <h3>Entrar na sala da guilda</h3>
+            <form id="join-invite-form" class="inline-form">
+              <input id="invite-code" placeholder="Cole o link ou código de convite" autocomplete="off" aria-label="Link ou código de convite" required />
+              <button type="submit" class="btn-primary">Entrar</button>
+            </form>
+            <p class="hint">O dono da sala envia um convite privado. Acesso somente para convidados.</p>
+          </div>
+          <div class="home-card">
             <h3>Pedidos pendentes</h3>
             <ul id="pending-list" class="plain-list"></ul>
           </div>
@@ -88,6 +96,19 @@
           </div>
         </div>
       </div>
+      <section id="voice-view" class="voice-view hidden" aria-label="Sala de voz">
+        <div class="voice-hero">🔊</div>
+        <h2 id="voice-title">Sala de voz</h2>
+        <p class="voice-hint">Converse por áudio com seus amigos em tempo real. O microfone só é ativado quando você entrar.</p>
+        <p id="voice-status" role="status">Microfone desligado</p>
+        <div class="voice-controls">
+          <button type="button" id="voice-join" class="btn-primary">🎙️ Entrar na voz</button>
+          <button type="button" id="voice-mute" class="voice-secondary hidden">🔇 Silenciar</button>
+          <button type="button" id="voice-leave" class="voice-secondary hidden">📞 Sair da voz</button>
+        </div>
+        <ul id="voice-peers" class="voice-peers"></ul>
+        <div id="voice-audio" hidden></div>
+      </section>
     </main>
 
     <!-- Members -->
@@ -100,7 +121,7 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js"></script>
+  <script src="/js/app.js?v=20261114"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

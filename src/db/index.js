@@ -18,7 +18,10 @@ function persist() {
   const data = db.export();
   const buffer = Buffer.from(data);
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(DB_PATH, buffer);
+  // Atomic replace: a crash during write must not corrupt the active chat database.
+  const tempPath = DB_PATH + '.tmp';
+  fs.writeFileSync(tempPath, buffer, { mode: 0o600 });
+  fs.renameSync(tempPath, DB_PATH);
 }
 
 function run(sql, params = []) {
@@ -143,6 +146,17 @@ async function init() {
       FOREIGN KEY (dm_channel_id) REFERENCES dm_channels(id),
       FOREIGN KEY (author_id) REFERENCES users(id)
     );
+
+    CREATE TABLE IF NOT EXISTS server_invites (
+      code TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      max_uses INTEGER NOT NULL DEFAULT 20,
+      uses INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_server_invites_server ON server_invites(server_id);
 
     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_dm_messages ON dm_messages(dm_channel_id, created_at);

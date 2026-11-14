@@ -1,5 +1,6 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const { authRequired } = require('../middleware/auth');
 
 function createServersRouter(db) {
@@ -90,6 +91,63 @@ function createServersRouter(db) {
       server: { id, name, owner_id: req.user.id, icon_emoji: '✨' },
       channels: [{ id: channelId, name: 'geral' }],
     });
+  });
+
+  // Convites apenas para servidores privados criados pelos usuários.
+  router.post('/:serverId/invites', authRequired, (req, res) => {
+    const server = db.get('SELECT id, name, owner_id FROM servers WHERE id = ?', [req.params.serverId]);
+    if (!server) return res.status(404).json({ error: 'Servidor não encontrado' });
+    if (server.owner_id !== req.user.id) return res.status(403).json({ error: 'Somente o dono pode convidar' });
+    const code = crypto.randomBytes(18).toString('base64url');
+    const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+    db.run('INSERT INTO server_invites (code, server_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?)',
+      [code, server.id, req.user.id, expiresAt, 30]);
+    res.status(201).json({ invite: { code, expires_at: expiresAt, url: 'https://chat.bairroanimefire.com/?invite=' + code } });
+  });
+
+  router.get('/invites/:code', authRequired, (req, res) => {
+    const code = String(req.params.code || '');
+    if (!/^[A-Za-z0-9_-]{20,40}$/.test(code)) return res.status(404).json({ error: 'Convite inválido' });
+    const invite = db.get(`SELECT i.code, i.expires_at, i.max_uses, i.uses, s.id AS server_id, s.name, s.icon_emoji
+      FROM server_invites i JOIN servers s ON s.id = i.server_id WHERE i.code = ?`, [code]);
+    if (!invite || Date.parse(invite.expires_at) < Date.now() || invite.uses >= invite.max_uses) {
+      return res.status(404).json({ error: 'Convite expirado ou esgotado' });
+    }
+    res.json({ invite });
+  });
+
+  router.post('/invites/join', authRequired, (req, res) => {
+    const code = String(req.body?.code || '').trim();
+    if (!/^[A-Za-z0-9_-]{20,40}$/.test(code)) return res.status(400).json({ error: 'Código inválido' });
+    const invite = db.get(`SELECT i.*, s.name FROM server_invites i
+      JOIN servers s ON s.id = i.server_id WHERE i.code = ?`, [code]);
+    if (!invite || Date.parse(invite.expires_at) < Date.now() || invite.uses >= invite.max_uses) {
+      return res.status(404).json({ error: 'Convite expirado ou esgotado' });
+    }
+    const already = db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
+      [invite.server_id, req.user.id]);
+    if (!already) {
+      db.run('INSERT INTO server_members (server_id, user_id) VALUES (?, ?)', [invite.server_id, req.user.id]);
+      db.run('UPDATE server_invites SET uses = uses + 1 WHERE code = ?', [code]);
+    }
+    res.json({ ok: true, already_member: !!already, server_id: invite.server_id, server_name: invite.name });
+  });
+
+  router.post('/:serverId/channels', authRequired, (req, res) => {
+    const server = db.get('SELECT id, owner_id FROM servers WHERE id = ?', [req.params.serverId]);
+    if (!server) return res.status(404).json({ error: 'Servidor não encontrado' });
+    if (server.owner_id !== req.user.id) return res.status(403).json({ error: 'Somente o dono pode criar canais' });
+    const name = String(req.body?.name || '').trim().toLowerCase().replace(/\s+/g, '-');
+    const type = req.body?.type === 'voice' ? 'voice' : 'text';
+    if (!/^[a-z0-9_\-]{2,32}$/.test(name)) return res.status(400).json({ error: 'Nome do canal inválido (letras, números e -)' });
+    if (db.get('SELECT 1 FROM channels WHERE server_id = ? AND name = ?', [server.id, name])) {
+      return res.status(409).json({ error: 'Esse canal já existe' });
+    }
+    const pos = db.get('SELECT MAX(position) AS pos FROM channels WHERE server_id = ?', [server.id]);
+    const id = uuidv4();
+    db.run('INSERT INTO channels (id, server_id, name, type, position) VALUES (?, ?, ?, ?, ?)',
+      [id, server.id, name, type, (Number(pos?.pos) || 0) + 1]);
+    res.status(201).json({ channel: { id, server_id: server.id, name, type } });
   });
 
   return router;

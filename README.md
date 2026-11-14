@@ -69,3 +69,18 @@ data/                  # chat.db (criado em runtime)
 ## Deploy (Hostinger Node)
 
 O pai/agente faz o deploy depois da autenticação Hostinger. Localmente basta `npm start` com `PORT` definido pelo painel.
+
+## Atualização 14/11/2026 — salas privadas e voz da guilda
+
+- Autenticação exclusivamente pelo SSO da Conta BairroAnimeFire, cookies HttpOnly (sem JWT em localStorage).
+- Servidores próprios com acesso por convite, códigos aleatórios, validade de 7 dias e até 30 usos.
+- Somente o dono cria convites e canais; convidados entram nos canais do servidor.
+- Canais de texto e mensagens diretas com Socket.IO e verificação de membros antes de entrar em rooms.
+- Somente amigos confirmados ou membros de um mesmo servidor privado podem iniciar uma DM.
+- Canais de voz WebRTC (até 10 conexões por sala) via sinalização autenticada no Socket.IO. Áudio P2P, sem gravação no servidor.
+- Microfone ativado só pelo clique de entrar; controle de mudo e sair; responsividade para PC e celular.
+- Origem HTTP e WebSocket restrita ao subdomínio do chat; páginas privadas sem indexação.
+- Banco SQLite com salvamento por substituição atômica; preservar backup do banco antes de atualizações.
+- QA: testes de SSO não autenticado, convites, controle de acesso, DMs, mensagens e sinalização em staging.
+
+**Limites:** chamadas de voz podem falhar em redes NAT restritivas sem TURN, e testes automatizados de sinalização não substituem duas chamadas reais. Ainda não há vídeo, compartilhamento de tela, anexos S3, permissões avançadas, moderação completa nem criptografia ponta a ponta das mensagens.
