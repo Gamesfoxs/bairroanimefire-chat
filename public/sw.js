@@ -1,46 +1,28 @@
-const CACHE = 'baf-chat-v1';
-const ASSETS = [
-  '/',
-  '/index.html',
-  '/css/style.css',
-  '/js/app.js',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-];
+const CACHE = 'baf-chat-v2-20261114';
+const ASSETS = ['/', '/index.html', '/css/style.css?v=20261114',
+  '/js/app.js?v=20261114', '/manifest.json',
+  '/icons/icon-192.png', '/icons/icon-512.png'];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
+self.addEventListener('activate', event => {
+  event.waitUntil(caches.keys().then(keys =>
+    Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key)))
+  ).then(() => self.clients.claim()));
 });
-
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  // Network-first for API and socket; cache-first for static
-  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/socket.io')) {
-    return;
-  }
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const fetched = fetch(event.request)
-        .then((res) => {
-          if (res.ok && event.request.method === 'GET') {
-            const clone = res.clone();
-            caches.open(CACHE).then((c) => c.put(event.request, clone));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fetched;
-    })
-  );
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin ||
+      url.pathname.startsWith('/api') || url.pathname.startsWith('/auth') ||
+      url.pathname.startsWith('/socket.io')) return;
+  // Prefer the network to avoid stale login pages and frontends after release.
+  event.respondWith(fetch(request).then(response => {
+    if (response.ok && response.type === 'basic') {
+      const copy = response.clone();
+      event.waitUntil(caches.open(CACHE).then(cache => cache.put(request, copy)));
+    }
+    return response;
+  }).catch(async () => (await caches.match(request)) || (await caches.match('/'))));
 });

@@ -2,7 +2,6 @@ require('dotenv').config();
 const path = require('path');
 const http = require('http');
 const express = require('express');
-const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { Server } = require('socket.io');
 
@@ -21,12 +20,30 @@ async function main() {
 
   const app = express();
   const server = http.createServer(app);
+  const trustedOrigins = new Set(['https://chat.bairroanimefire.com', 'https://chat.bairroanimefire.com.br']);
   const io = new Server(server, {
-    cors: { origin: true, credentials: true },
+    cors: { origin: [...trustedOrigins], credentials: true },
+    allowRequest: (request, callback) => {
+      const origin = request.headers.origin;
+      callback(null, !origin || trustedOrigins.has(origin));
+    },
+    maxHttpBufferSize: 100000,
   });
 
   app.set('trust proxy', 1);
-  app.use(cors({ origin: true, credentials: true }));
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    if (req.headers.origin && !trustedOrigins.has(req.headers.origin)) {
+      return res.status(403).json({ error: 'Origem não autorizada' });
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    if (req.path.startsWith('/api') || req.path.startsWith('/auth')) {
+      res.setHeader('Cache-Control', 'private, no-store');
+    }
+    next();
+  });
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
 

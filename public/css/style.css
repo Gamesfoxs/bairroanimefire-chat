@@ -538,3 +538,35 @@ ul { list-style: none; }
   font-size: 0.85rem;
   line-height: 1.4;
 }
+
+/* Guild private-room controls and live voice */
+.channel-toolbar { display:flex; flex-wrap:wrap; gap:6px; padding:8px; border-bottom:1px solid rgba(255,255,255,.08); }
+.channel-toolbar button { font-size:.8rem; border:1px solid rgba(168,85,247,.35); padding:7px 10px; border-radius:8px; background:var(--bg-input); color:var(--text); text-align:left; }
+.channel-toolbar button:hover { background:var(--bg-active); }
+.voice-view { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:auto; padding:24px; text-align:center; gap:14px; }
+.voice-hero { font-size:4rem; filter:drop-shadow(0 0 18px rgba(168,85,247,.6)); }
+.voice-view h2 { font-size:1.4rem; }
+.voice-hint { max-width:440px; color:var(--text-muted); line-height:1.55; }
+#voice-status { color:var(--text-muted); min-height:24px; }
+.voice-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:center; }
+.voice-controls button { min-width:135px; min-height:44px; border-radius:10px; }
+.voice-controls .btn-primary { width:auto; margin:0; }
+.voice-secondary { background:var(--bg-active); padding:10px 16px; color:var(--text); }
+.voice-secondary:hover { filter:brightness(1.2); }
+.voice-peers { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; max-width:500px; }
+.voice-peers li { padding:8px 14px; background:var(--bg-sidebar); border:1px solid rgba(168,85,247,.2); border-radius:30px; }
+.nav-item.voice-channel { color:#d8b4fe; }
+.nav-item.voice-channel.active { box-shadow:inset 3px 0 var(--accent); }
+.inline-form input { min-width:0; }
+@media (max-width:640px) {
+  .home-view { padding:18px 12px; }
+  .home-cards { grid-template-columns: minmax(0, 1fr); }
+  .home-card { padding:14px; }
+  .inline-form { flex-wrap:wrap; }
+  .inline-form .btn-primary { min-height:42px; }
+  .composer { padding: 6px 8px max(12px, env(safe-area-inset-bottom)); }
+  .messages { padding:10px 7px; }
+  .msg { gap:8px; }
+  .voice-view { padding:18px 12px; justify-content:flex-start; padding-top:10vh; }
+  .voice-controls button { flex:1; }
+}

@@ -10,15 +10,37 @@ function getOnlineIds() {
   return Array.from(onlineUsers.keys());
 }
 
-function broadcastPresence(io) {
-  io.emit('presence:update', { online: getOnlineIds() });
+function broadcastPresence(io, db) {
+  const online = new Set(getOnlineIds());
+  for (const userId of online) {
+    // Only share presence with friends or members of the same private server.
+    const visible = db.all(`SELECT DISTINCT b.user_id AS id FROM server_members a
+      JOIN server_members b ON a.server_id = b.server_id
+      JOIN servers s ON s.id = a.server_id
+      WHERE a.user_id = ? AND s.name != 'Bairro Anime Fire'
+      UNION SELECT CASE WHEN user_id = ? THEN friend_id ELSE user_id END AS id
+      FROM friendships WHERE status = 'accepted' AND (user_id = ? OR friend_id = ?)`,
+      [userId, userId, userId, userId]);
+    const allowed = visible.map(row => row.id).filter(id => online.has(id));
+    io.to(`user:${userId}`).emit('presence:update', { online: [userId, ...allowed] });
+  }
 }
 
 function setupSocket(io, db) {
+  // Rooms are not an authorization boundary: validate membership before joining
+  // or sending typing/signaling events, including after reconnects.
+  function channelAccess(userId, channelId) {
+    return db.get(`SELECT c.id, c.type FROM channels c
+      JOIN server_members m ON m.server_id = c.server_id
+      WHERE c.id = ? AND m.user_id = ?`, [channelId, userId]);
+  }
+  function dmAccess(userId, dmId) {
+    return db.get(`SELECT id FROM dm_channels WHERE id = ?
+      AND (user1_id = ? OR user2_id = ?)`, [dmId, userId, userId]);
+  }
   io.use((socket, next) => {
     const token =
       socket.handshake.auth?.token ||
-      socket.handshake.query?.token ||
       (socket.handshake.headers.cookie || '')
         .split(';')
         .map((c) => c.trim())
@@ -37,23 +59,33 @@ function setupSocket(io, db) {
 
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
-    broadcastPresence(io);
-
     socket.join(`user:${userId}`);
+    broadcastPresence(io, db);
 
-    socket.on('channel:join', ({ channelId }) => {
-      if (!channelId) return;
+    socket.on('channel:join', ({ channelId } = {}, ack) => {
+      if (!channelId || !channelAccess(userId, channelId)) {
+        if (typeof ack === 'function') ack({ error: 'Sem acesso ao canal' });
+        return;
+      }
       socket.join(`channel:${channelId}`);
+      if (typeof ack === 'function') ack({ ok: true });
     });
 
-    socket.on('channel:leave', ({ channelId }) => {
-      if (!channelId) return;
-      socket.leave(`channel:${channelId}`);
+    socket.on('channel:leave', ({ channelId } = {}) => {
+      if (channelId) socket.leave(`channel:${channelId}`);
     });
 
-    socket.on('dm:join', ({ dmId }) => {
-      if (!dmId) return;
+    socket.on('dm:join', ({ dmId } = {}, ack) => {
+      if (!dmId || !dmAccess(userId, dmId)) {
+        if (typeof ack === 'function') ack({ error: 'Sem acesso à conversa' });
+        return;
+      }
       socket.join(`dm:${dmId}`);
+      if (typeof ack === 'function') ack({ ok: true });
+    });
+
+    socket.on('dm:leave', ({ dmId } = {}) => {
+      if (dmId) socket.leave(`dm:${dmId}`);
     });
 
     socket.on('message:send', (payload, ack) => {
@@ -70,8 +102,8 @@ function setupSocket(io, db) {
         }
 
         const channel = db.get(`SELECT * FROM channels WHERE id = ?`, [channelId]);
-        if (!channel) {
-          if (typeof ack === 'function') ack({ error: 'Canal não encontrado' });
+        if (!channel || channel.type !== 'text') {
+          if (typeof ack === 'function') ack({ error: 'Canal de texto não encontrado' });
           return;
         }
         const member = db.get(
@@ -173,31 +205,79 @@ function setupSocket(io, db) {
       }
     });
 
-    socket.on('typing:start', ({ channelId, dmId }) => {
-      if (channelId) {
+    socket.on('typing:start', ({ channelId, dmId } = {}) => {
+      if (channelId && socket.rooms.has(`channel:${channelId}`) && channelAccess(userId, channelId)) {
         socket.to(`channel:${channelId}`).emit('typing:start', {
-          channelId,
-          userId,
-          username: socket.user.username,
+          channelId, userId, username: socket.user.username,
         });
       }
-      if (dmId) {
+      if (dmId && socket.rooms.has(`dm:${dmId}`) && dmAccess(userId, dmId)) {
         socket.to(`dm:${dmId}`).emit('typing:start', {
-          dmId,
-          userId,
-          username: socket.user.username,
+          dmId, userId, username: socket.user.username,
         });
       }
     });
 
+    // Small private voice channels: WebRTC carries audio P2P, Socket.IO only
+    // relays signaling to authenticated participants in the same voice room.
+    const voiceRooms = new Set();
+    function leaveVoice(channelId) {
+      if (!voiceRooms.has(channelId)) return;
+      voiceRooms.delete(channelId);
+      socket.leave(`voice:${channelId}`);
+      socket.to(`voice:${channelId}`).emit('voice:peer-left', { channelId, socketId: socket.id });
+    }
+    socket.on('voice:join', ({ channelId } = {}, ack) => {
+      const channel = channelId && channelAccess(userId, channelId);
+      if (!channel || channel.type !== 'voice') {
+        if (typeof ack === 'function') ack({ error: 'Sem acesso à sala de voz' });
+        return;
+      }
+      const room = `voice:${channelId}`;
+      const current = [...(io.sockets.adapter.rooms.get(room) || [])];
+      if (current.length >= 10 && !current.includes(socket.id)) {
+        if (typeof ack === 'function') ack({ error: 'Sala cheia (10 pessoas)' });
+        return;
+      }
+      // One voice room per browser connection at a time.
+      for (const old of [...voiceRooms]) if (old !== channelId) leaveVoice(old);
+      const peers = current.filter(id => id !== socket.id).map(id => ({
+        socketId: id, userId: socketUsers.get(id)?.id,
+        username: socketUsers.get(id)?.username
+      }));
+      socket.join(room);
+      voiceRooms.add(channelId);
+      if (typeof ack === 'function') ack({ ok: true, peers, socketId: socket.id });
+      socket.to(room).emit('voice:peer-joined', { channelId, socketId: socket.id, userId, username: socket.user.username });
+    });
+    socket.on('voice:leave', ({ channelId } = {}) => {
+      if (channelId) leaveVoice(channelId);
+    });
+    socket.on('voice:signal', (payload = {}) => {
+      const { channelId, to, type, sdp, candidate } = payload;
+      const room = `voice:${channelId}`;
+      const isMember = channelId && channelAccess(userId, channelId);
+      if (!isMember || !voiceRooms.has(channelId) || !socket.rooms.has(room)) return;
+      if (!['offer', 'answer', 'ice'].includes(type) || typeof to !== 'string') return;
+      const members = io.sockets.adapter.rooms.get(room);
+      if (!members?.has(to) || to === socket.id) return;
+      if (type === 'ice' && (!candidate || JSON.stringify(candidate).length > 4096)) return;
+      if (type !== 'ice' && (typeof sdp !== 'string' || sdp.length > 16000)) return;
+      io.to(to).emit('voice:signal', {
+        channelId, from: socket.id, type,
+        ...(type === 'ice' ? { candidate } : { sdp })
+      });
+    });
+
     socket.on('disconnect', () => {
+      for (const room of [...voiceRooms]) leaveVoice(room);
       socketUsers.delete(socket.id);
       const set = onlineUsers.get(userId);
       if (set) {
         set.delete(socket.id);
         if (set.size === 0) onlineUsers.delete(userId);
       }
-      broadcastPresence(io);
+      broadcastPresence(io, db);
     });
   });
 }
