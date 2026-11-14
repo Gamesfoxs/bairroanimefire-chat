@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Bairro Anime Fire</title>
-  <link rel="stylesheet" href="/css/style.css?v=20261114" />
+  <link rel="stylesheet" href="/css/style.css?v=20261114m2" />
 </head>
 <body>
   <!-- Auth -->
@@ -27,7 +27,8 @@
   </div>
 
   <!-- App shell -->
-  <div id="app" class="app hidden">
+  <div id="app" class="app hidden" data-view="home">
+    <button type="button" class="mobile-backdrop" id="mobile-backdrop" aria-label="Fechar menus" hidden></button>
     <!-- Server rail -->
     <aside class="server-rail" id="server-rail" aria-label="Servidores">
       <button class="server-btn home active" id="btn-home" title="Início / Amigos" data-view="home">🏠</button>
@@ -40,6 +41,7 @@
     <aside class="sidebar" id="sidebar">
       <header class="sidebar-header" id="sidebar-header">
         <h2 id="sidebar-title">Amigos</h2>
+        <button type="button" class="icon-btn mobile-only close-drawer" id="btn-close-sidebar" aria-label="Fechar menu">✕</button>
       </header>
       <div class="sidebar-body" id="sidebar-body"></div>
       <footer class="user-panel" id="user-panel">
@@ -55,10 +57,10 @@
     <!-- Main chat -->
     <main class="chat-main">
       <header class="chat-header">
-        <button type="button" class="icon-btn mobile-only" id="btn-toggle-sidebar" aria-label="Menu">☰</button>
+        <button type="button" class="icon-btn mobile-only" id="btn-toggle-sidebar" aria-label="Abrir menu de servidores e conversas" aria-controls="sidebar" aria-expanded="false">☰</button>
         <span class="channel-hash" id="chat-hash">#</span>
         <h2 id="chat-title">Bem-vindo</h2>
-        <button type="button" class="icon-btn mobile-only" id="btn-toggle-members" aria-label="Membros">👥</button>
+        <button type="button" class="icon-btn mobile-only" id="btn-toggle-members" aria-label="Mostrar membros" aria-controls="members-panel" aria-expanded="false" hidden>👥</button>
       </header>
       <div class="messages" id="messages" role="log" aria-live="polite"></div>
       <div class="typing" id="typing" hidden></div>
@@ -67,31 +69,38 @@
         <button type="submit" class="btn-send" aria-label="Enviar">➤</button>
       </form>
       <div id="home-view" class="home-view">
-        <h2>🔥 Bem-vindo ao Bairro Anime Fire</h2>
-        <p>Escolha um canal à esquerda ou abra uma conversa com um amigo.</p>
+        <div class="home-hero">
+          <span class="home-eyebrow">🦊 SUA CENTRAL</span>
+          <h2>Bem-vindo ao <span>Bairro Anime Fire</span></h2>
+          <p>Converse com seus amigos, organize sua tropa e participe das salas da guilda.</p>
+          <div class="home-actions">
+            <button type="button" class="btn-primary home-rail-trigger" id="home-open-nav">☰ Explorar servidores</button>
+            <button type="button" class="home-secondary" id="home-create-server">＋ Criar servidor</button>
+          </div>
+        </div>
         <div class="home-cards">
           <div class="home-card">
-            <h3>Adicionar amigo</h3>
+            <h3><span aria-hidden="true">👤</span> Adicionar amigo</h3>
             <form id="add-friend-form" class="inline-form">
-              <input id="friend-username" placeholder="nome_de_usuario" maxlength="20" required />
+              <input id="friend-username" aria-label="Nome de usuário do amigo" placeholder="Nome de usuário" maxlength="20" required />
               <button type="submit" class="btn-primary">Adicionar</button>
             </form>
             <p id="friend-msg" class="hint"></p>
           </div>
           <div class="home-card">
-            <h3>Entrar na sala da guilda</h3>
+            <h3><span aria-hidden="true">🔗</span> Entrar na sala da guilda</h3>
             <form id="join-invite-form" class="inline-form">
-              <input id="invite-code" placeholder="Cole o link ou código de convite" autocomplete="off" aria-label="Link ou código de convite" required />
+              <input id="invite-code" placeholder="Link ou código de convite" autocomplete="off" aria-label="Link ou código de convite" required />
               <button type="submit" class="btn-primary">Entrar</button>
             </form>
             <p class="hint">O dono da sala envia um convite privado. Acesso somente para convidados.</p>
           </div>
           <div class="home-card">
-            <h3>Pedidos pendentes</h3>
+            <h3><span aria-hidden="true">📨</span> Pedidos pendentes</h3>
             <ul id="pending-list" class="plain-list"></ul>
           </div>
           <div class="home-card">
-            <h3>Seus amigos</h3>
+            <h3><span aria-hidden="true">💬</span> Seus amigos</h3>
             <ul id="friends-list" class="plain-list"></ul>
           </div>
         </div>
@@ -113,7 +122,7 @@
 
     <!-- Members -->
     <aside class="members" id="members-panel" aria-label="Membros">
-      <h3>Membros — <span id="member-count">0</span></h3>
+      <div class="members-heading"><h3>Membros — <span id="member-count">0</span></h3><button type="button" class="icon-btn mobile-only" id="btn-close-members" aria-label="Fechar membros">✕</button></div>
       <ul id="members-list"></ul>
     </aside>
   </div>
@@ -121,7 +130,7 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js?v=20261114"></script>
+  <script src="/js/app.js?v=20261114m2"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
