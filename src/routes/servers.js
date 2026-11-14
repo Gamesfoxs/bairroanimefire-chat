@@ -87,9 +87,17 @@ function createServersRouter(db) {
       `INSERT INTO channels (id, server_id, name, type, position) VALUES (?, ?, 'geral', 'text', 0)`,
       [channelId, id]
     );
+    const voiceId = uuidv4();
+    db.run(
+      'INSERT INTO channels (id, server_id, name, type, position) VALUES (?, ?, ?, ?, ?)',
+      [voiceId, id, 'voz-geral', 'voice', 1]
+    );
     res.status(201).json({
       server: { id, name, owner_id: req.user.id, icon_emoji: '✨' },
-      channels: [{ id: channelId, name: 'geral' }],
+      channels: [
+        { id: channelId, name: 'geral', type: 'text' },
+        { id: voiceId, name: 'voz-geral', type: 'voice' },
+      ],
     });
   });
 

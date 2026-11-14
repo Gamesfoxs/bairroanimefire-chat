@@ -199,6 +199,26 @@ async function init() {
     }
   }
 
+  // Provide a visible voice room on existing servers without touching text
+  // channels, messages or server owners. Safe to run again on every boot.
+  const { v4: voiceUuid } = require('uuid');
+  for (const server of all('SELECT id FROM servers')) {
+    const exists = get('SELECT id FROM channels WHERE server_id = ? AND type = ?', [server.id, 'voice']);
+    if (exists) continue;
+    const name = ['voz-geral', 'sala-de-voz', 'chamada'].find(candidate =>
+      !get('SELECT id FROM channels WHERE server_id = ? AND name = ?', [server.id, candidate])
+    );
+    if (!name) {
+      console.warn('Não foi possível criar canal de voz padrão para servidor', server.id);
+      continue;
+    }
+    const pos = get('SELECT MAX(position) AS pos FROM channels WHERE server_id = ?', [server.id]);
+    run(
+      'INSERT INTO channels (id, server_id, name, type, position) VALUES (?, ?, ?, ?, ?)',
+      [voiceUuid(), server.id, name, 'voice', (Number(pos?.pos) || 0) + 1]
+    );
+  }
+
   // Auto-persist periódico
   setInterval(() => persist(), 30000);
 

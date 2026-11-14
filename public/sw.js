@@ -1,6 +1,6 @@
-const CACHE = 'baf-chat-v4-20261114v3';
-const ASSETS = ['/', '/index.html', '/css/style.css?v=20261114v3',
-  '/js/app.js?v=20261114v3', '/manifest.json',
+const CACHE = 'baf-chat-v5-20261114v4';
+const ASSETS = ['/', '/index.html', '/css/style.css?v=20261114v4',
+  '/js/app.js?v=20261114v4', '/manifest.json',
   '/icons/icon-192.png', '/icons/icon-512.png'];
 
 self.addEventListener('install', event => {
