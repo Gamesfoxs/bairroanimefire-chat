@@ -162,6 +162,20 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_dm_messages ON dm_messages(dm_channel_id, created_at);
   `);
 
+  // Administration and private S3 media (idempotent schema).
+  exec([
+    'CREATE TABLE IF NOT EXISTS server_staff (server_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL DEFAULT \'moderator\', PRIMARY KEY(server_id,user_id))',
+    'CREATE TABLE IF NOT EXISTS server_bans (server_id TEXT NOT NULL, user_id TEXT NOT NULL, created_by TEXT NOT NULL, reason TEXT NOT NULL DEFAULT \'\', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(server_id,user_id))',
+    'CREATE TABLE IF NOT EXISTS media_uploads (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT NOT NULL, s3_key TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, status TEXT NOT NULL DEFAULT \'pending\', message_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)',
+    'CREATE INDEX IF NOT EXISTS idx_media_scope ON media_uploads(scope_type,scope_id)',
+    'CREATE TABLE IF NOT EXISTS server_audit (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_server ON server_audit(server_id,created_at)'
+  ].join(';') + ';');
+  for (const table of ['messages','dm_messages']) {
+    const cols = all('PRAGMA table_info(' + table + ')').map(c => c.name);
+    if (!cols.includes('media_id')) run('ALTER TABLE ' + table + ' ADD COLUMN media_id TEXT');
+  }
+
   // SSO columns (idempotent)
   try {
     const cols = all(`PRAGMA table_info(users)`).map((c) => c.name);

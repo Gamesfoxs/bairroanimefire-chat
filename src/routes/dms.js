@@ -82,10 +82,11 @@ function createDmsRouter(db) {
     }
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const messages = db.all(
-      `SELECT m.id, m.content, m.created_at, m.dm_channel_id,
+      `SELECT m.id, m.content, m.created_at, m.dm_channel_id, m.media_id, a.mime AS media_type, a.bytes AS media_size,
               u.id AS author_id, u.username AS author_username,
               u.display_name AS author_display_name, u.avatar_color AS author_color
        FROM dm_messages m
+       LEFT JOIN media_uploads a ON a.id = m.media_id
        INNER JOIN users u ON u.id = m.author_id
        WHERE m.dm_channel_id = ?
        ORDER BY m.created_at DESC

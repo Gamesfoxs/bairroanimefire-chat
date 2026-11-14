@@ -4,6 +4,10 @@ const crypto = require('crypto');
 const { authRequired } = require('../middleware/auth');
 
 function createServersRouter(db) {
+  function canManage(serverId,userId) {
+    const owner=db.get('SELECT owner_id FROM servers WHERE id=?',[serverId]);
+    return Boolean(owner && (owner.owner_id===userId || db.get('SELECT 1 FROM server_staff WHERE server_id=? AND user_id=?',[serverId,userId])));
+  }
   const router = express.Router();
 
   router.get('/', authRequired, (req, res) => {
@@ -37,9 +41,13 @@ function createServersRouter(db) {
     );
     if (!member) return res.status(403).json({ error: 'Você não é membro deste servidor' });
     const members = db.all(
-      `SELECT u.id, u.username, u.display_name, u.avatar_color
+      `SELECT u.id, u.username, u.display_name, u.avatar_color,
+       CASE WHEN u.id = s.owner_id THEN 'owner'
+            WHEN st.user_id IS NOT NULL THEN 'moderator' ELSE 'member' END AS role
        FROM users u
        INNER JOIN server_members sm ON sm.user_id = u.id
+       INNER JOIN servers s ON s.id = sm.server_id
+       LEFT JOIN server_staff st ON st.server_id = sm.server_id AND st.user_id = u.id
        WHERE sm.server_id = ?
        ORDER BY u.display_name COLLATE NOCASE`,
       [req.params.serverId]
@@ -58,10 +66,11 @@ function createServersRouter(db) {
 
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const messages = db.all(
-      `SELECT m.id, m.content, m.created_at, m.channel_id,
+      `SELECT m.id, m.content, m.created_at, m.channel_id, m.media_id, a.mime AS media_type, a.bytes AS media_size,
               u.id AS author_id, u.username AS author_username,
               u.display_name AS author_display_name, u.avatar_color AS author_color
        FROM messages m
+       LEFT JOIN media_uploads a ON a.id = m.media_id
        INNER JOIN users u ON u.id = m.author_id
        WHERE m.channel_id = ?
        ORDER BY m.created_at DESC
@@ -105,7 +114,7 @@ function createServersRouter(db) {
   router.post('/:serverId/invites', authRequired, (req, res) => {
     const server = db.get('SELECT id, name, owner_id FROM servers WHERE id = ?', [req.params.serverId]);
     if (!server) return res.status(404).json({ error: 'Servidor não encontrado' });
-    if (server.owner_id !== req.user.id) return res.status(403).json({ error: 'Somente o dono pode convidar' });
+    if (!canManage(server.id,req.user.id)) return res.status(403).json({ error: 'Sem permissão para convidar' });
     const code = crypto.randomBytes(18).toString('base64url');
     const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
     db.run('INSERT INTO server_invites (code, server_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?)',
@@ -132,6 +141,9 @@ function createServersRouter(db) {
     if (!invite || Date.parse(invite.expires_at) < Date.now() || invite.uses >= invite.max_uses) {
       return res.status(404).json({ error: 'Convite expirado ou esgotado' });
     }
+    if (db.get('SELECT 1 FROM server_bans WHERE server_id=? AND user_id=?',[invite.server_id,req.user.id])) {
+      return res.status(403).json({ error: 'Você não pode entrar neste servidor' });
+    }
     const already = db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?',
       [invite.server_id, req.user.id]);
     if (!already) {
@@ -144,7 +156,7 @@ function createServersRouter(db) {
   router.post('/:serverId/channels', authRequired, (req, res) => {
     const server = db.get('SELECT id, owner_id FROM servers WHERE id = ?', [req.params.serverId]);
     if (!server) return res.status(404).json({ error: 'Servidor não encontrado' });
-    if (server.owner_id !== req.user.id) return res.status(403).json({ error: 'Somente o dono pode criar canais' });
+    if (!canManage(server.id,req.user.id)) return res.status(403).json({ error: 'Sem permissão para criar canais' });
     const name = String(req.body?.name || '').trim().toLowerCase().replace(/\s+/g, '-');
     const type = req.body?.type === 'voice' ? 'voice' : 'text';
     if (!/^[a-z0-9_\-]{2,32}$/.test(name)) return res.status(400).json({ error: 'Nome do canal inválido (letras, números e -)' });

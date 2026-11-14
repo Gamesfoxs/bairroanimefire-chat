@@ -84,3 +84,28 @@ O pai/agente faz o deploy depois da autenticação Hostinger. Localmente basta `
 - QA: testes de SSO não autenticado, convites, controle de acesso, DMs, mensagens e sinalização em staging.
 
 **Limites:** chamadas de voz podem falhar em redes NAT restritivas sem TURN, e testes automatizados de sinalização não substituem duas chamadas reais. Ainda não há vídeo, compartilhamento de tela, anexos S3, permissões avançadas, moderação completa nem criptografia ponta a ponta das mensagens.
+
+
+## Administração e arquivos (novembro de 2026)
+
+Cada servidor tem um dono. O dono acessa **🛡️ Administração** na barra lateral,
+pode renomear o servidor, promover ou remover moderadores, expulsar, banir,
+desbanir e apagar mensagens. Moderadores podem convidar, criar canais,
+expulsar/banir membros comuns e apagar mensagens. As permissões são verificadas
+no servidor a cada ação. Expulsar/banir remove o acesso ao servidor e às salas.
+
+No chat e no PV, os botões **📎** e **GIF** enviam PNG/JPEG/WEBP/GIF (até 8 MiB)
+ou MP4/WEBM (até 24 MiB). O botão GIF abre o seletor de arquivos GIF do aparelho;
+não inclui pesquisa online. Os anexos são salvos **no S3 privado**, nunca como
+arquivos permanentes na VPS. Os destinatários autorizados recebem links S3
+temporários após autenticação. Há limites de 40 uploads ou 250 MiB por pessoa
+em 24 horas. Uploads abandonados há mais de 24 horas são limpos periodicamente.
+
+Configure os valores MEDIA_S3_* no .env local usando credenciais S3
+apropriadas, com o prefixo separado. NÃO inclua chaves no Git.
+Para uploads de vídeo acima de 10 MiB, o proxy Nginx do chat precisa permitir
+corpos de até 24 MiB em /api/media/upload; recomendável usar
+proxy_request_buffering off somente nessa rota.
+
+Cuidado: mídia compartilhada não é criptografada de ponta a ponta, e links
+temporários ainda funcionam até expirar. Não trate isso como um cofre de dados.

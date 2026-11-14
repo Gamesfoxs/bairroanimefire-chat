@@ -11,6 +11,9 @@ const { createSsoRouter } = require('./src/routes/sso');
 const { createServersRouter } = require('./src/routes/servers');
 const { createFriendsRouter } = require('./src/routes/friends');
 const { createDmsRouter } = require('./src/routes/dms');
+const { createAdminRouter } = require('./src/routes/admin');
+const { createMediaRouter } = require('./src/routes/media');
+const mediaStorage = require('./src/media/s3');
 const { setupSocket } = require('./src/socket');
 
 const PORT = process.env.PORT || 3000;
@@ -60,8 +63,26 @@ async function main() {
   app.use('/api/servers', createServersRouter(db));
   app.use('/api/friends', createFriendsRouter(db));
   app.use('/api/dms', createDmsRouter(db));
+  app.use('/api/admin', createAdminRouter(db, io));
+  app.use('/api/media', createMediaRouter(db));
 
   setupSocket(io, db);
+
+  // Clean unfinished private S3 uploads after 24h. Already-sent messages
+  // are never touched. Limited batches keep maintenance cheap.
+  async function cleanPendingMedia() {
+    if (!mediaStorage.config()) return;
+    const orphaned = db.all("SELECT id,s3_key FROM media_uploads WHERE status='pending' AND created_at<datetime('now','-24 hours') LIMIT 30");
+    for (const item of orphaned) {
+      try {
+        await mediaStorage.remove(item.s3_key);
+        db.run('DELETE FROM media_uploads WHERE id=? AND status=?',[item.id,'pending']);
+      } catch (err) { console.warn('media cleanup:',err.message); }
+    }
+  }
+  cleanPendingMedia().catch(err => console.warn('media cleanup:',err.message));
+  const cleanupTimer = setInterval(() => cleanPendingMedia().catch(() => {}), 6 * 3600000);
+  cleanupTimer.unref();
 
   // SPA fallback (Express 5)
   app.get('/{*path}', (req, res, next) => {
