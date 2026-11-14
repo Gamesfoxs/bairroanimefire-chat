@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Bairro Anime Fire</title>
-  <link rel="stylesheet" href="/css/style.css?v=20261114v3" />
+  <link rel="stylesheet" href="/css/style.css?v=20261114v4" />
 </head>
 <body>
   <!-- Auth -->
@@ -78,6 +78,7 @@
           <p>Converse com seus amigos, organize sua tropa e participe das salas da guilda.</p>
           <div class="home-actions">
             <button type="button" class="btn-primary home-rail-trigger" id="home-open-nav">☰ Explorar servidores</button>
+            <button type="button" class="home-secondary home-call-action" id="home-open-voice">🎙️ Entrar na voz</button>
             <button type="button" class="home-secondary" id="home-create-server">＋ Criar servidor</button>
           </div>
         </div>
@@ -144,7 +145,7 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js?v=20261114v3"></script>
+  <script src="/js/app.js?v=20261114v4"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

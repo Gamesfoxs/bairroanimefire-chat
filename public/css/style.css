@@ -843,3 +843,11 @@ button, input { touch-action: manipulation; }
   .msg-new, .home-card, .home-hero, .toast, .voice-video-grid.has-video, .realtime-chip.connected .realtime-dot { animation: none !important; }
   .nav-item, .server-btn, .icon-btn, .btn-primary, .home-secondary, .channel-toolbar button { transition: none !important; }
 }
+
+/* Voice channel discoverability */
+.nav-item.voice-channel { border-left: 3px solid rgba(174,101,246,.58); background: rgba(153,79,221,.08); margin-block: 4px; font-weight: 700; }
+.nav-item.voice-channel:hover, .nav-item.voice-channel.active { background: rgba(155,80,236,.24); border-left-color: #c084fc; }
+.channel-toolbar { gap: 8px; }
+.channel-toolbar button { min-height: 42px; }
+.home-call-action { border-color: rgba(116,222,195,.35); background: rgba(26,123,114,.19); color: #cffcee; }
+.home-call-action:hover { background: rgba(26,123,114,.32); }

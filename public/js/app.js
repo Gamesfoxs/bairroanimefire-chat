@@ -373,23 +373,28 @@
           }
         } catch (err) { toast(err.message); }
       });
-      const add = document.createElement('button');
-      add.textContent = '＋ Criar canal';
-      add.addEventListener('click', async () => {
-        const name = prompt('Nome do canal (sem espaços):');
+      async function addChannel(type) {
+        const suggested = type === 'voice' ? 'sala-de-voz' : 'novo-canal';
+        const name = prompt(type === 'voice' ? 'Nome do canal de voz:' : 'Nome do canal de texto:', suggested);
         if (!name || !name.trim()) return;
-        const type = confirm('Canal de VOZ? (Cancelar = texto)') ? 'voice' : 'text';
         try {
-          await api('/servers/' + server.id + '/channels', {
+          const result = await api('/servers/' + server.id + '/channels', {
             method: 'POST', body: JSON.stringify({ name, type })
           });
           const data = await api('/servers/' + server.id + '/channels');
           state.channels = data.channels;
           renderChannelSidebar();
-          toast('Canal criado!');
+          toast(type === 'voice' ? 'Sala de voz criada!' : 'Canal de texto criado!');
+          if (type === 'voice' && result.channel?.id) await openVoiceChannel(result.channel.id);
         } catch (err) { toast(err.message); }
-      });
-      tools.append(invite, add);
+      }
+      const addText = document.createElement('button');
+      addText.textContent = '# Criar texto';
+      addText.addEventListener('click', () => addChannel('text'));
+      const addVoice = document.createElement('button');
+      addVoice.textContent = '🎙️ Criar voz';
+      addVoice.addEventListener('click', () => addChannel('voice'));
+      tools.append(invite, addText, addVoice);
       body.appendChild(tools);
     }
     for (const type of ['text', 'voice']) {
@@ -1147,6 +1152,16 @@
   $('#btn-close-members').addEventListener('click', closeMobilePanels);
   overlay.addEventListener('click', closeMobilePanels);
   $('#home-open-nav').addEventListener('click', () => openMobilePanel('nav'));
+  $('#home-open-voice').addEventListener('click', async () => {
+    const server = state.servers.find(s => /stunt\s*games/i.test(s.name)) || state.servers[0];
+    if (!server) return toast('Entre ou crie um servidor para abrir a chamada');
+    try {
+      await openServer(server.id);
+      const voice = state.channels.find(ch => ch.type === 'voice');
+      if (!voice) return toast('Este servidor ainda não tem sala de voz');
+      await openVoiceChannel(voice.id);
+    } catch (err) { toast(err.message); }
+  });
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeMobilePanels();
   });
