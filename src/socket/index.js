@@ -92,7 +92,8 @@ function setupSocket(io, db) {
       try {
         const content = String(payload?.content || '').trim();
         const channelId = payload?.channelId;
-        if (!content || !channelId) {
+        const mediaId = typeof payload?.mediaId === 'string' ? payload.mediaId : null;
+        if ((!content && !mediaId) || !channelId) {
           if (typeof ack === 'function') ack({ error: 'Mensagem inválida' });
           return;
         }
@@ -115,12 +116,18 @@ function setupSocket(io, db) {
           return;
         }
 
+        const media = mediaId && db.get('SELECT id,mime,bytes FROM media_uploads WHERE id=? AND owner_id=? AND scope_type=? AND scope_id=? AND status=?',[mediaId,userId,'channel',channelId,'pending']);
+        if (mediaId && !media) {
+          if (typeof ack === 'function') ack({ error: 'Anexo inválido ou usado' });
+          return;
+        }
         const id = uuidv4();
         const created_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
         db.run(
-          `INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)`,
-          [id, channelId, userId, content, created_at]
+          `INSERT INTO messages (id, channel_id, author_id, content, created_at, media_id) VALUES (?, ?, ?, ?, ?, ?)`,
+          [id, channelId, userId, content, created_at, mediaId || null]
         );
+        if (media) db.run('UPDATE media_uploads SET status=?,message_id=? WHERE id=?',['sent',id,mediaId]);
 
         const author = db.get(
           `SELECT id, username, display_name, avatar_color FROM users WHERE id = ?`,
@@ -131,6 +138,9 @@ function setupSocket(io, db) {
           channel_id: channelId,
           content,
           created_at,
+          media_id: media?.id || null,
+          media_type: media?.mime || null,
+          media_size: media?.bytes || null,
           author_id: author.id,
           author_username: author.username,
           author_display_name: author.display_name,
@@ -148,7 +158,8 @@ function setupSocket(io, db) {
       try {
         const content = String(payload?.content || '').trim();
         const dmId = payload?.dmId;
-        if (!content || !dmId) {
+        const mediaId = typeof payload?.mediaId === 'string' ? payload.mediaId : null;
+        if ((!content && !mediaId) || !dmId) {
           if (typeof ack === 'function') ack({ error: 'Mensagem inválida' });
           return;
         }
@@ -167,12 +178,18 @@ function setupSocket(io, db) {
           return;
         }
 
+        const media = mediaId && db.get('SELECT id,mime,bytes FROM media_uploads WHERE id=? AND owner_id=? AND scope_type=? AND scope_id=? AND status=?',[mediaId,userId,'dm',dmId,'pending']);
+        if (mediaId && !media) {
+          if (typeof ack === 'function') ack({ error: 'Anexo inválido ou usado' });
+          return;
+        }
         const id = uuidv4();
         const created_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
         db.run(
-          `INSERT INTO dm_messages (id, dm_channel_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)`,
-          [id, dmId, userId, content, created_at]
+          `INSERT INTO dm_messages (id, dm_channel_id, author_id, content, created_at, media_id) VALUES (?, ?, ?, ?, ?, ?)`,
+          [id, dmId, userId, content, created_at, mediaId || null]
         );
+        if (media) db.run('UPDATE media_uploads SET status=?,message_id=? WHERE id=?',['sent',id,mediaId]);
 
         const author = db.get(
           `SELECT id, username, display_name, avatar_color FROM users WHERE id = ?`,
@@ -183,6 +200,9 @@ function setupSocket(io, db) {
           dm_channel_id: dmId,
           content,
           created_at,
+          media_id: media?.id || null,
+          media_type: media?.mime || null,
+          media_size: media?.bytes || null,
           author_id: author.id,
           author_username: author.username,
           author_display_name: author.display_name,

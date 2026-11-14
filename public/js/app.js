@@ -14,6 +14,9 @@
     friends: [],
     pending: [],
     dms: [],
+    pendingMediaFile: null,
+    mediaSending: false,
+    currentAdminServerId: null,
     online: new Set(),
     view: 'home', // home | channel | dm
     activeServerId: null,
@@ -186,6 +189,19 @@
         handleVoiceSignal(payload).catch(() => toast('Falha na conexão de voz. Tente sair e entrar.'));
       }
     });
+    state.socket.on('message:deleted', ({channelId,messageId}) => {
+      if (state.view === 'channel' && state.activeChannelId === channelId) {
+        const el = $$('.msg', $('#messages')).find(x => x.dataset.id === messageId);
+        el?.remove();
+      }
+    });
+    state.socket.on('server:removed', async ({serverId}) => {
+      await loadServers().catch(() => {});
+      if (state.activeServerId === serverId) showHome();
+      closeAdmin();
+      toast('Você foi removido de um servidor.');
+    });
+    state.socket.on('servers:changed', () => { loadServers().catch(() => {}); });
     state.socket.on('disconnect', () => updateRealtimeIndicator(false));
     state.socket.on('connect_error', (err) => {
       updateRealtimeIndicator(false);
@@ -328,6 +344,8 @@
   $('#home-create-server').addEventListener('click', createServer);
 
   async function openServer(serverId) {
+    closeAdmin();
+    clearMediaAttachment();
     leaveVoice();
     state.activeServerId = serverId;
     state.view = 'channel';
@@ -353,11 +371,17 @@
     closeMobilePanels();
   }
 
+  function canModerateCurrentServer() {
+    const server = state.servers.find(x => x.id === state.activeServerId);
+    return Boolean(server && (server.owner_id === state.user.id ||
+      state.members.some(member => member.id === state.user.id && member.role === 'moderator')));
+  }
+
   function renderChannelSidebar() {
     const body = $('#sidebar-body');
     body.innerHTML = '';
     const server = state.servers.find(s => s.id === state.activeServerId);
-    if (server && server.owner_id === state.user.id) {
+    if (server && canModerateCurrentServer()) {
       const tools = document.createElement('div');
       tools.className = 'channel-toolbar';
       const invite = document.createElement('button');
@@ -394,7 +418,10 @@
       const addVoice = document.createElement('button');
       addVoice.textContent = '🎙️ Criar voz';
       addVoice.addEventListener('click', () => addChannel('voice'));
-      tools.append(invite, addText, addVoice);
+      const admin = document.createElement('button');
+      admin.textContent = '🛡️ Administração';
+      admin.addEventListener('click', openAdmin);
+      tools.append(invite, addText, addVoice, admin);
       body.appendChild(tools);
     }
     for (const type of ['text', 'voice']) {
@@ -452,12 +479,19 @@
         <span>${escapeHtml(m.display_name || m.username)}</span>
         <span class="dot" title="${isOnline ? 'Online' : 'Offline'}"></span>
       `;
+      if (m.role === 'owner' || m.role === 'moderator') {
+        const role = document.createElement('span');
+        role.className = 'member-role ' + m.role;
+        role.textContent = m.role === 'owner' ? '👑 Dono' : '🛡️ Mod';
+        li.insertBefore(role, li.querySelector('.dot'));
+      }
       li.addEventListener('dblclick', () => startDmWith(m.id));
       list.appendChild(li);
     }
   }
 
   async function openChannel(channelId) {
+    clearMediaAttachment();
     leaveVoice();
     if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
     if (state.activeChannelId && state.socket) {
@@ -483,6 +517,7 @@
   }
 
   async function openDm(dmId, meta) {
+    clearMediaAttachment();
     leaveVoice();
     if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
     if (state.activeChannelId && state.socket) {
@@ -521,6 +556,8 @@
   }
 
   function showHome() {
+    closeAdmin();
+    clearMediaAttachment();
     leaveVoice();
     if (state.activeChannelId && state.socket) state.socket.emit('channel:leave', { channelId: state.activeChannelId });
     if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
@@ -712,6 +749,43 @@
         <div class="msg-content">${escapeHtml(m.content)}</div>
       </div>
     `;
+    if (m.media_id && /^[a-f0-9-]{36}$/i.test(m.media_id) && m.media_type) {
+      const container = document.createElement('div');
+      container.className = 'msg-media';
+      const url = '/api/media/' + encodeURIComponent(m.media_id);
+      if (m.media_type.startsWith('image/')) {
+        const image = document.createElement('img');
+        image.src = url;
+        image.alt = m.media_type === 'image/gif' ? 'GIF enviado na conversa' : 'Imagem enviada na conversa';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        container.appendChild(image);
+      } else if (m.media_type.startsWith('video/')) {
+        const video = document.createElement('video');
+        video.src = url;
+        video.controls = true;
+        video.preload = 'metadata';
+        video.playsInline = true;
+        video.setAttribute('aria-label','Vídeo enviado na conversa');
+        container.appendChild(video);
+      }
+      el.querySelector('.msg-body').appendChild(container);
+    }
+    if (state.view === 'channel' && state.activeServerId && (m.author_id === state.user.id || canModerateCurrentServer())) {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'msg-delete';
+      remove.textContent = 'Apagar';
+      remove.setAttribute('aria-label', 'Apagar mensagem');
+      remove.addEventListener('click', async () => {
+        if (!confirm('Apagar esta mensagem para todos?')) return;
+        try {
+          await api('/admin/' + state.activeServerId + '/messages/' + m.id, {method:'DELETE'});
+          el.remove();
+        } catch(err) { toast(err.message); }
+      });
+      el.querySelector('.msg-meta').appendChild(remove);
+    }
     return el;
   }
 
@@ -724,22 +798,89 @@
   }
 
   // ---------- Composer ----------
-  $('#composer').addEventListener('submit', (e) => {
+  // ---------- Media attachments: uploaded directly to private S3 via the API ----------
+  function clearMediaAttachment() {
+    state.pendingMediaFile = null;
+    $('#media-file').value = '';
+    $('#attachment-preview').hidden = true;
+    $('#attachment-name').textContent = '';
+  }
+  $('#btn-attach').addEventListener('click', () => {
+    $('#media-file').accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm';
+    $('#media-file').click();
+  });
+  $('#btn-gif').addEventListener('click', () => {
+    $('#media-file').accept = '.gif,image/gif';
+    $('#media-file').click();
+  });
+  $('#attachment-clear').addEventListener('click', clearMediaAttachment);
+  $('#media-file').addEventListener('change', () => {
+    const file = $('#media-file').files?.[0];
+    if (!file) return;
+    const max = file.type.startsWith('image/') ? 8 * 1024 * 1024 : 24 * 1024 * 1024;
+    if (file.size > max || file.size === 0) {
+      clearMediaAttachment();
+      return toast('Arquivo grande demais: limite 8 MB para imagens/GIFs ou 24 MB para vídeos');
+    }
+    state.pendingMediaFile = file;
+    $('#attachment-name').textContent = '📎 ' + file.name + ' • ' + (file.size / 1048576).toFixed(1) + ' MB';
+    $('#attachment-preview').hidden = false;
+  });
+  async function uploadMedia(file, scopeType, scopeId) {
+    const url = '/api/media/upload?scope_type=' + encodeURIComponent(scopeType) + '&scope_id=' + encodeURIComponent(scopeId);
+    const result = await fetch(url, {
+      method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/octet-stream'},
+      body: file,
+    });
+    const data = await result.json().catch(() => ({}));
+    if (!result.ok) throw new Error(data.error || 'Falha ao enviar o arquivo');
+    return data.media.id;
+  }
+  function sendSocketMessage(eventName, payload) {
+    return new Promise((resolve,reject) => {
+      const timer = setTimeout(() => reject(new Error('O envio da mensagem demorou demais')), 15000);
+      state.socket.emit(eventName,payload,ack => {
+        clearTimeout(timer);
+        if (!ack?.ok) return reject(new Error(ack?.error || 'Falha ao enviar mensagem'));
+        resolve(ack);
+      });
+    });
+  }
+  $('#composer').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (state.mediaSending) return;
     const input = $('#composer-input');
     const content = input.value.trim();
-    if (!content || !state.socket) return;
-
-    if (state.view === 'channel' && state.activeChannelId) {
-      state.socket.emit('message:send', { channelId: state.activeChannelId, content }, (ack) => {
-        if (ack?.error) toast(ack.error);
+    const file = state.pendingMediaFile;
+    if ((!content && !file) || !state.socket?.connected) return;
+    const type = state.view === 'channel' ? 'channel' : state.view === 'dm' ? 'dm' : null;
+    const id = type === 'channel' ? state.activeChannelId : type === 'dm' ? state.activeDmId : null;
+    if (!type || !id) return;
+    state.mediaSending = true;
+    $('#btn-submit-message').disabled = true;
+    $('#btn-submit-message').textContent = file ? '…' : '➤';
+    try {
+      let mediaId = null;
+      if (file) {
+        toast('Enviando arquivo para o armazenamento…', 4500);
+        mediaId = await uploadMedia(file,type,id);
+      }
+      if (state.view !== type || (type === 'channel' ? state.activeChannelId : state.activeDmId) !== id) {
+        throw new Error('A conversa mudou durante o envio. Tente novamente.');
+      }
+      await sendSocketMessage(type === 'channel' ? 'message:send' : 'dm:send', {
+        ...(type === 'channel' ? {channelId:id} : {dmId:id}),
+        content, ...(mediaId ? {mediaId} : {}),
       });
-    } else if (state.view === 'dm' && state.activeDmId) {
-      state.socket.emit('dm:send', { dmId: state.activeDmId, content }, (ack) => {
-        if (ack?.error) toast(ack.error);
-      });
+      input.value = '';
+      clearMediaAttachment();
+    } catch(err) { toast(err.message,5000); }
+    finally {
+      state.mediaSending = false;
+      $('#btn-submit-message').disabled = false;
+      $('#btn-submit-message').textContent = '➤';
     }
-    input.value = '';
   });
 
   $('#composer-input').addEventListener('input', () => {
@@ -1115,6 +1256,145 @@
     $('#voice-mute').textContent = track.enabled ? '🔇 Silenciar' : '🎙️ Ativar microfone';
   });
 
+  // ---------- Owner / moderator dashboard ----------
+  function closeAdmin() {
+    $('#admin-panel').classList.add('hidden');
+    state.currentAdminServerId = null;
+  }
+  $('#admin-close').addEventListener('click', closeAdmin);
+  $('#admin-panel').addEventListener('click', ev => {
+    if (ev.target === $('#admin-panel')) closeAdmin();
+  });
+  function adminActionButton(text,cssClass,handler) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'admin-action ' + (cssClass || '');
+    b.textContent = text;
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await handler(); }
+      catch(err) { toast(err.message,4500); }
+      finally { b.disabled = false; }
+    });
+    return b;
+  }
+  async function refreshAdmin() {
+    const serverId = state.currentAdminServerId;
+    if (!serverId) return;
+    const data = await api('/admin/' + serverId);
+    if (state.currentAdminServerId !== serverId) return;
+    $('#admin-title').textContent = 'Administrar ' + data.server.name;
+    $('#admin-rename-form').hidden = !data.is_owner;
+    $('#admin-server-name').value = data.server.name;
+    $('#admin-member-count').textContent = '(' + data.members.length + ')';
+    const memberList = $('#admin-members');
+    memberList.replaceChildren();
+    for (const member of data.members) {
+      const line = document.createElement('div');
+      line.className = 'admin-member';
+      const meta = document.createElement('div');
+      meta.className = 'admin-member-info';
+      const name = document.createElement('strong');
+      name.textContent = member.display_name || member.username;
+      const role = document.createElement('small');
+      role.textContent = member.role === 'owner' ? '👑 Dono' : member.role === 'moderator' ? '🛡️ Moderador' : 'Membro';
+      meta.append(name,role);
+      const actions = document.createElement('div');
+      actions.className = 'admin-member-actions';
+      if (member.role !== 'owner' && member.id !== state.user.id) {
+        if (data.is_owner) {
+          const nextRole = member.role === 'moderator' ? 'member' : 'moderator';
+          actions.appendChild(adminActionButton(member.role === 'moderator' ? 'Remover mod' : 'Tornar mod','', async () => {
+            await api('/admin/' + serverId + '/roles/' + member.id, {
+              method:'PUT', body:JSON.stringify({role:nextRole})
+            });
+            await refreshAdmin();
+          }));
+        }
+        if (data.is_owner || member.role !== 'moderator') {
+          actions.appendChild(adminActionButton('Expulsar','', async () => {
+            if (!confirm('Expulsar ' + (member.display_name || member.username) + '?')) return;
+            await api('/admin/' + serverId + '/members/' + member.id + '/kick',{method:'POST'});
+            await refreshAdmin();
+          }));
+          actions.appendChild(adminActionButton('Banir','danger', async () => {
+            if (!confirm('Banir ' + (member.display_name || member.username) + ' deste servidor?')) return;
+            const reason = prompt('Motivo (opcional):') || '';
+            await api('/admin/' + serverId + '/members/' + member.id + '/ban',{
+              method:'POST',body:JSON.stringify({reason})
+            });
+            await refreshAdmin();
+          }));
+        }
+      }
+      line.append(meta,actions);
+      memberList.appendChild(line);
+    }
+    const bans = $('#admin-bans');
+    bans.replaceChildren();
+    if (!data.bans.length) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'Nenhuma pessoa banida';
+      bans.appendChild(empty);
+    }
+    for (const ban of data.bans) {
+      const line = document.createElement('div');
+      line.className = 'admin-member';
+      const label = document.createElement('span');
+      label.textContent = (ban.display_name || ban.username || 'Usuário') + (ban.reason ? ' • ' + ban.reason : '');
+      const unban = adminActionButton('Desbanir','',async ()=>{
+        await api('/admin/' + serverId + '/bans/' + ban.user_id, {method:'DELETE'});
+        await refreshAdmin();
+      });
+      line.append(label,unban);
+      bans.appendChild(line);
+    }
+    const audit = $('#admin-audit');
+    audit.replaceChildren();
+    if (!data.audit.length) audit.textContent = 'Nenhuma ação ainda';
+    for (const action of data.audit) {
+      const row = document.createElement('p');
+      row.textContent = (action.actor || 'Admin') + ' • ' + action.action + ' • ' + action.created_at;
+      audit.appendChild(row);
+    }
+    const activeId = state.activeServerId;
+    if (activeId === serverId) {
+      try {
+        const result = await api('/servers/' + serverId + '/members');
+        state.members = result.members;
+        renderMembers();
+        renderChannelSidebar();
+      } catch {}
+    }
+  }
+  async function openAdmin() {
+    if (!state.activeServerId || !canModerateCurrentServer()) return;
+    state.currentAdminServerId = state.activeServerId;
+    $('#admin-panel').classList.remove('hidden');
+    closeMobilePanels();
+    $('#admin-close').focus();
+    try { await refreshAdmin(); }
+    catch(err) { closeAdmin(); toast(err.message); }
+  }
+  $('#admin-rename-form').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const serverId = state.currentAdminServerId;
+    if (!serverId) return;
+    try {
+      await api('/admin/' + serverId, {
+        method:'PATCH',body:JSON.stringify({name:$('#admin-server-name').value})
+      });
+      await loadServers();
+      if (state.activeServerId === serverId) {
+        const server = state.servers.find(x => x.id === serverId);
+        $('#sidebar-title').textContent = server?.name || 'Servidor';
+      }
+      await refreshAdmin();
+      toast('Nome atualizado!');
+    } catch(err) { toast(err.message); }
+  });
+
   // ---------- Mobile navigation and modal panels ----------
   const navButton = $('#btn-toggle-sidebar');
   const membersButton = $('#btn-toggle-members');
@@ -1163,7 +1443,10 @@
     } catch (err) { toast(err.message); }
   });
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeMobilePanels();
+    if (event.key === 'Escape') {
+      closeMobilePanels();
+      closeAdmin();
+    }
   });
   window.addEventListener('resize', syncMobilePanels);
   syncMobilePanels();
