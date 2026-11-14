@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Bairro Anime Fire</title>
-  <link rel="stylesheet" href="/css/style.css?v=20261114m2" />
+  <link rel="stylesheet" href="/css/style.css?v=20261114v3" />
 </head>
 <body>
   <!-- Auth -->
@@ -50,7 +50,7 @@
           <strong id="me-name">—</strong>
           <span id="me-status">Online</span>
         </div>
-        <button type="button" class="icon-btn" id="btn-logout" title="Sair">⏻</button>
+        <button type="button" class="icon-btn" id="btn-logout" title="Sair da conta" aria-label="Sair da conta"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3h-6"/></svg></button>
       </footer>
     </aside>
 
@@ -60,6 +60,9 @@
         <button type="button" class="icon-btn mobile-only" id="btn-toggle-sidebar" aria-label="Abrir menu de servidores e conversas" aria-controls="sidebar" aria-expanded="false">☰</button>
         <span class="channel-hash" id="chat-hash">#</span>
         <h2 id="chat-title">Bem-vindo</h2>
+        <div class="realtime-chip" id="realtime-chip" role="status" aria-live="polite" aria-label="Status da conexão">
+          <span class="realtime-dot" aria-hidden="true"></span><span id="realtime-label">Conectando</span>
+        </div>
         <button type="button" class="icon-btn mobile-only" id="btn-toggle-members" aria-label="Mostrar membros" aria-controls="members-panel" aria-expanded="false" hidden>👥</button>
       </header>
       <div class="messages" id="messages" role="log" aria-live="polite"></div>
@@ -105,17 +108,28 @@
           </div>
         </div>
       </div>
-      <section id="voice-view" class="voice-view hidden" aria-label="Sala de voz">
-        <div class="voice-hero">🔊</div>
-        <h2 id="voice-title">Sala de voz</h2>
-        <p class="voice-hint">Converse por áudio com seus amigos em tempo real. O microfone só é ativado quando você entrar.</p>
-        <p id="voice-status" role="status">Microfone desligado</p>
-        <div class="voice-controls">
-          <button type="button" id="voice-join" class="btn-primary">🎙️ Entrar na voz</button>
-          <button type="button" id="voice-mute" class="voice-secondary hidden">🔇 Silenciar</button>
-          <button type="button" id="voice-leave" class="voice-secondary hidden">📞 Sair da voz</button>
+      <section id="voice-view" class="voice-view hidden" aria-label="Sala de chamada em tempo real">
+        <div class="call-heading">
+          <span class="call-eyebrow"><span class="call-live-dot"></span> CHAMADA EM TEMPO REAL</span>
+          <h2 id="voice-title">Sala de chamada</h2>
+          <p class="voice-hint">Voz e câmera com a turma, no PC ou no celular. Acesse o microfone apenas quando entrar.</p>
+          <p id="voice-status" role="status">Microfone desligado</p>
         </div>
-        <ul id="voice-peers" class="voice-peers"></ul>
+        <div id="voice-video-grid" class="voice-video-grid" aria-label="Vídeo da chamada">
+          <div id="voice-local-card" class="voice-video-card" hidden>
+            <video id="voice-local-video" autoplay muted playsinline></video>
+            <span id="voice-local-label" class="voice-video-label">Você • câmera</span>
+          </div>
+        </div>
+        <ul id="voice-peers" class="voice-peers" aria-label="Participantes da chamada"></ul>
+        <div class="voice-controls" role="group" aria-label="Controles da chamada">
+          <button type="button" id="voice-join" class="btn-primary">🎙️ Entrar na chamada</button>
+          <button type="button" id="voice-mute" class="voice-secondary hidden">🔇 Silenciar</button>
+          <button type="button" id="voice-camera" class="voice-secondary hidden">📹 Ligar câmera</button>
+          <button type="button" id="voice-screen" class="voice-secondary hidden">🖥️ Transmitir tela</button>
+          <button type="button" id="voice-leave" class="voice-secondary call-danger hidden">📞 Sair</button>
+        </div>
+        <p id="voice-device-hint" class="voice-device-hint">Áudio e câmera precisam de permissão. Compartilhar a tela depende do navegador e pode não funcionar no celular.</p>
         <div id="voice-audio" hidden></div>
       </section>
     </main>
@@ -130,7 +144,7 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js?v=20261114m2"></script>
+  <script src="/js/app.js?v=20261114v3"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});

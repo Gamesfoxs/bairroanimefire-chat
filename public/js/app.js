@@ -22,6 +22,8 @@
     typingTimer: null,
     voiceChannelId: null,
     localStream: null,
+    videoStream: null,
+    videoMode: null,
     voicePeers: new Map(),
     voiceParticipants: new Map(),
     pendingInvite: new URLSearchParams(location.search).get('invite') || localStorage.getItem('baf_chat_invite'),
@@ -99,6 +101,7 @@
     state.token = null;
     state.user = null;
     leaveVoice();
+    updateRealtimeIndicator(false);
     if (state.socket) { state.socket.disconnect(); state.socket = null; }
     $('#app').classList.add('hidden');
     $('#auth-screen').classList.remove('hidden');
@@ -114,6 +117,7 @@
     });
 
     state.socket.on('connect', () => {
+      updateRealtimeIndicator(true);
       if (state.voiceChannelId && state.localStream) {
         for (const p of state.voicePeers.values()) p.close();
         state.voicePeers.clear();
@@ -182,10 +186,20 @@
         handleVoiceSignal(payload).catch(() => toast('Falha na conexão de voz. Tente sair e entrar.'));
       }
     });
+    state.socket.on('disconnect', () => updateRealtimeIndicator(false));
     state.socket.on('connect_error', (err) => {
+      updateRealtimeIndicator(false);
       console.warn('socket', err.message);
       toast('Conexão do chat indisponível');
     });
+  }
+
+  // Atualizado diretamente pela conexão Socket.IO: nunca anuncie "ao vivo" desconectado.
+  function updateRealtimeIndicator(connected) {
+    const chip = $('#realtime-chip');
+    chip.classList.toggle('connected', Boolean(connected));
+    $('#realtime-label').textContent = connected ? 'Ao vivo' : 'Reconectando';
+    chip.title = connected ? 'Conectado ao chat em tempo real' : 'Sem conexão em tempo real';
   }
 
   // ---------- Boot ----------
@@ -243,7 +257,10 @@
       const btn = document.createElement('button');
       btn.className = 'server-btn' + (s.id === state.activeServerId ? ' active' : '');
       btn.title = s.name;
-      btn.textContent = s.icon_emoji || s.name.slice(0, 1);
+      btn.textContent = s.icon_emoji && s.icon_emoji !== '✨'
+        ? s.icon_emoji
+        : initials(s.name.replace(/\s+/g, ' ').trim());
+      btn.setAttribute('aria-label', 'Abrir servidor ' + s.name);
       btn.addEventListener('click', () => openServer(s.id));
       list.appendChild(btn);
     }
@@ -670,7 +687,9 @@
     const box = $('#messages');
     const empty = box.querySelector('.empty-chat');
     if (empty) empty.remove();
-    box.appendChild(buildMessageEl(msg));
+    const item = buildMessageEl(msg);
+    item.classList.add('msg-new');
+    box.appendChild(item);
     box.scrollTop = box.scrollHeight;
   }
 
@@ -750,10 +769,8 @@
     $('#home-view').classList.add('hidden');
     $('#voice-view').classList.remove('hidden');
     $('#voice-title').textContent = '🔊 ' + (ch?.name || 'Voz');
-    $('#voice-join').classList.toggle('hidden', !!state.localStream);
-    $('#voice-leave').classList.toggle('hidden', !state.localStream);
-    $('#voice-mute').classList.toggle('hidden', !state.localStream);
-    $('#voice-status').textContent = state.localStream ? 'Conectado à sala de voz' : 'Seu microfone está desligado';
+    syncCallControls();
+    $('#voice-status').textContent = state.localStream ? 'Conectado à chamada' : 'Seu microfone está desligado';
     renderVoiceParticipants();
     renderChannelSidebar();
     closeMobilePanels();
@@ -778,8 +795,15 @@
     const pc = state.voicePeers.get(socketId);
     if (pc) pc.close();
     state.voicePeers.delete(socketId);
-    const el = document.getElementById('voice-audio-' + socketId);
-    if (el) { el.srcObject = null; el.remove(); }
+    const audio = document.getElementById('voice-audio-' + socketId);
+    if (audio) { audio.srcObject = null; audio.remove(); }
+    const videoCard = document.getElementById('voice-video-' + socketId);
+    if (videoCard) {
+      const video = videoCard.querySelector('video');
+      if (video) video.srcObject = null;
+      videoCard.remove();
+    }
+    syncVideoGrid();
   }
 
   function createVoicePeer(socketId) {
@@ -789,7 +813,19 @@
       iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
     });
     pc._pendingIce = [];
-    for (const track of state.localStream.getTracks()) pc.addTrack(track, state.localStream);
+    for (const track of state.localStream.getAudioTracks()) pc.addTrack(track, state.localStream);
+    // Negotiate a recv/send video transceiver from the start, even for audio-only
+    // calls. replaceTrack() then turns camera/screen on without offer glare.
+    const videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
+    pc._videoSender = videoTransceiver.sender;
+    if (state.videoStream) {
+      const videoTrack = state.videoStream.getVideoTracks()[0];
+      if (videoTrack && videoTrack.readyState === 'live') {
+        pc._videoSender.replaceTrack(videoTrack).catch(() => {
+          toast('Não foi possível transmitir vídeo a um participante');
+        });
+      }
+    }
     pc.onicecandidate = event => {
       if (event.candidate && state.socket?.connected && state.voiceChannelId) {
         state.socket.emit('voice:signal', {
@@ -798,18 +834,56 @@
       }
     };
     pc.ontrack = event => {
-      let audio = document.getElementById('voice-audio-' + socketId);
-      if (!audio) {
-        audio = document.createElement('audio');
-        audio.id = 'voice-audio-' + socketId;
-        audio.autoplay = true;
-        audio.playsInline = true;
-        $('#voice-audio').appendChild(audio);
+      if (event.track.kind === 'audio') {
+        let audio = document.getElementById('voice-audio-' + socketId);
+        if (!audio) {
+          audio = document.createElement('audio');
+          audio.id = 'voice-audio-' + socketId;
+          audio.autoplay = true;
+          audio.playsInline = true;
+          $('#voice-audio').appendChild(audio);
+        }
+        audio.srcObject = new MediaStream([event.track]);
+        audio.play().catch(() => {
+          $('#voice-status').textContent = 'Toque na tela para liberar o som';
+        });
+        return;
       }
-      audio.srcObject = event.streams[0] || new MediaStream([event.track]);
-      audio.play().catch(() => {
-        $('#voice-status').textContent = 'Toque na tela para liberar o som';
-      });
+      if (event.track.kind === 'video') {
+        const showVideo = () => {
+          if (event.track.readyState === 'ended') return;
+          let card = document.getElementById('voice-video-' + socketId);
+          if (!card) {
+            card = document.createElement('div');
+            card.id = 'voice-video-' + socketId;
+            card.className = 'voice-video-card remote';
+            const video = document.createElement('video');
+            video.autoplay = true;
+            video.playsInline = true;
+            video.setAttribute('aria-label', 'Vídeo de outro participante');
+            const caption = document.createElement('span');
+            caption.className = 'voice-video-label';
+            caption.textContent = state.voiceParticipants.get(socketId)?.username || 'Participante';
+            card.append(video, caption);
+            $('#voice-video-grid').appendChild(card);
+          }
+          const video = card.querySelector('video');
+          video.srcObject = new MediaStream([event.track]);
+          video.play().catch(() => {
+            $('#voice-status').textContent = 'Toque na chamada para liberar o vídeo';
+          });
+          syncVideoGrid();
+        };
+        const hideVideo = () => {
+          const card = document.getElementById('voice-video-' + socketId);
+          if (card) { card.querySelector('video').srcObject = null; card.remove(); }
+          syncVideoGrid();
+        };
+        event.track.addEventListener('unmute', showVideo);
+        event.track.addEventListener('mute', hideVideo);
+        event.track.addEventListener('ended', hideVideo);
+        if (!event.track.muted) showVideo();
+      }
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed') {
@@ -885,9 +959,7 @@
         video: false
       });
       await joinVoiceSocket();
-      $('#voice-join').classList.add('hidden');
-      $('#voice-leave').classList.remove('hidden');
-      $('#voice-mute').classList.remove('hidden');
+      syncCallControls();
       $('#voice-mute').textContent = '🔇 Silenciar';
       renderVoiceParticipants();
     } catch (err) {
@@ -903,17 +975,130 @@
     }
     for (const id of [...state.voicePeers.keys()]) closeVoicePeer(id);
     state.voiceParticipants.clear();
+    stopLocalVideo();
     if (state.localStream) {
       for (const track of state.localStream.getTracks()) track.stop();
       state.localStream = null;
     }
     $('#voice-audio').replaceChildren();
-    $('#voice-join').classList.remove('hidden');
-    $('#voice-mute').classList.add('hidden');
-    $('#voice-leave').classList.add('hidden');
+    syncCallControls();
     if (resetView) state.voiceChannelId = null;
     if (state.view === 'voice') $('#voice-status').textContent = 'Microfone desligado';
   }
+
+  // ---------- Camera and screen sharing (WebRTC) ----------
+  function syncVideoGrid() {
+    const grid = $('#voice-video-grid');
+    grid.classList.toggle('has-video', Boolean(grid.querySelector('.voice-video-card:not([hidden])')));
+  }
+
+  function syncCallControls() {
+    const connected = Boolean(state.localStream);
+    $('#voice-join').classList.toggle('hidden', connected);
+    for (const id of ['voice-mute','voice-camera','voice-screen','voice-leave']) {
+      $('#' + id).classList.toggle('hidden', !connected);
+    }
+    $('#voice-camera').textContent = state.videoMode === 'camera' ? '📷 Desligar câmera' : '📹 Ligar câmera';
+    $('#voice-camera').setAttribute('aria-pressed', String(state.videoMode === 'camera'));
+    $('#voice-screen').textContent = state.videoMode === 'screen' ? '⏹️ Parar transmissão' : '🖥️ Transmitir tela';
+    $('#voice-screen').setAttribute('aria-pressed', String(state.videoMode === 'screen'));
+    const supported = Boolean(navigator.mediaDevices?.getDisplayMedia);
+    $('#voice-screen').disabled = !supported && state.videoMode !== 'screen';
+    $('#voice-screen').title = supported ? 'Compartilhar a tela ou janela (com permissão)' : 'Seu navegador não permite transmitir a tela';
+  }
+
+  function updateLocalVideo() {
+    const track = state.videoStream?.getVideoTracks()[0];
+    const card = $('#voice-local-card');
+    const preview = $('#voice-local-video');
+    if (track && track.readyState === 'live') {
+      preview.srcObject = new MediaStream([track]);
+      card.dataset.mode = state.videoMode || '';
+      card.hidden = false;
+      $('#voice-local-label').textContent = state.videoMode === 'screen' ? '🖥️ Você • tela' : '📹 Você • câmera';
+      preview.play().catch(() => {});
+    } else {
+      card.hidden = true;
+      preview.srcObject = null;
+    }
+    syncVideoGrid();
+    syncCallControls();
+  }
+
+  function stopLocalVideo() {
+    const previous = state.videoStream;
+    state.videoStream = null;
+    state.videoMode = null;
+    // No renegotiation: the sender remains available for the next camera/screen.
+    for (const pc of state.voicePeers.values()) {
+      pc._videoSender?.replaceTrack(null).catch(() => {});
+    }
+    if (previous) for (const track of previous.getTracks()) track.stop();
+    updateLocalVideo();
+  }
+
+  async function switchLocalVideo(mode) {
+    if (!state.localStream || !state.voiceChannelId) return toast('Entre na chamada primeiro');
+    if (state.videoMode === mode) { stopLocalVideo(); return; }
+    const channelId = state.voiceChannelId;
+    let stream;
+    try {
+      if (mode === 'screen') {
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          return toast('Seu navegador não suporta transmissão de tela. A câmera funciona no celular.');
+        }
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 } },
+          audio: false
+        });
+      }
+      const track = stream.getVideoTracks()[0];
+      if (!track) throw new Error('Nenhuma imagem encontrada');
+      if (!state.localStream || channelId !== state.voiceChannelId) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
+      const previousTrack = state.videoStream?.getVideoTracks()[0] || null;
+      const updatedPeers = [];
+      const failed = [];
+      for (const [id, pc] of state.voicePeers) {
+        try {
+          await pc._videoSender.replaceTrack(track);
+          updatedPeers.push(pc);
+        } catch {
+          failed.push(id);
+        }
+      }
+      if (failed.length) {
+        await Promise.all(updatedPeers.map(pc => pc._videoSender.replaceTrack(previousTrack).catch(() => {})));
+        stream.getTracks().forEach(t => t.stop());
+        toast('Este navegador não conseguiu enviar vídeo. Saia e entre na chamada.');
+        return;
+      }
+      const previous = state.videoStream;
+      state.videoStream = stream;
+      state.videoMode = mode;
+      // Browser's own "stop sharing" button returns to audio-only.
+      track.addEventListener('ended', () => {
+        if (state.videoStream === stream) stopLocalVideo();
+      });
+      if (previous) previous.getTracks().forEach(t => t.stop());
+      updateLocalVideo();
+      toast(mode === 'screen' ? '🖥️ Transmissão iniciada' : '📹 Câmera ligada');
+    } catch (err) {
+      stream?.getTracks().forEach(t => t.stop());
+      if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+        toast('Vídeo: ' + err.message);
+      } else {
+        toast('Permissão de câmera ou tela não concedida');
+      }
+    }
+  }
+
+  $('#voice-camera').addEventListener('click', () => switchLocalVideo('camera'));
+  $('#voice-screen').addEventListener('click', () => switchLocalVideo('screen'));
 
   $('#voice-join').addEventListener('click', startVoice);
   $('#voice-leave').addEventListener('click', () => leaveVoice(false));
