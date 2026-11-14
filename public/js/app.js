@@ -295,17 +295,20 @@
     }
   }
 
-  $('#btn-add-server').addEventListener('click', async () => {
+  async function createServer() {
     const name = prompt('Nome do novo servidor:');
     if (!name || !name.trim()) return;
     try {
-      await api('/servers', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+      const { server } = await api('/servers', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
       await loadServers();
+      if (server?.id) await openServer(server.id);
       toast('Servidor criado!');
     } catch (err) {
       toast(err.message);
     }
-  });
+  }
+  $('#btn-add-server').addEventListener('click', createServer);
+  $('#home-create-server').addEventListener('click', createServer);
 
   async function openServer(serverId) {
     leaveVoice();
@@ -503,6 +506,10 @@
     state.activeChannelId = null;
     state.activeDmId = null;
     state.activeServerId = null;
+    $('#app').dataset.view = 'home';
+    $('#btn-toggle-members').hidden = true;
+    $('#btn-home').classList.add('active');
+    renderServerRail();
     $('#sidebar-title').textContent = 'Amigos';
     $('#home-view').classList.remove('hidden');
     $('#voice-view').classList.add('hidden');
@@ -561,6 +568,8 @@
   }
 
   function showChatView() {
+    $('#app').dataset.view = state.view;
+    $('#btn-toggle-members').hidden = $('#members-panel').classList.contains('hidden');
     $('#voice-view').classList.add('hidden');
     $('#home-view').classList.add('hidden');
     $('#messages').classList.remove('hidden');
@@ -730,6 +739,8 @@
     state.activeChannelId = null;
     state.activeDmId = null;
     state.view = 'voice';
+    $('#app').dataset.view = 'voice';
+    $('#btn-toggle-members').hidden = $('#members-panel').classList.contains('hidden');
     state.voiceChannelId = channelId;
     const ch = state.channels.find(c => c.id === channelId);
     $('#chat-title').textContent = '🔊 ' + (ch?.name || 'Voz');
@@ -914,19 +925,48 @@
     $('#voice-mute').textContent = track.enabled ? '🔇 Silenciar' : '🎙️ Ativar microfone';
   });
 
-  // ---------- Mobile ----------
-  $('#btn-toggle-sidebar').addEventListener('click', () => {
-    $('#sidebar').classList.toggle('open');
-    $('#members-panel').classList.remove('open');
-  });
-  $('#btn-toggle-members').addEventListener('click', () => {
-    $('#members-panel').classList.toggle('open');
-    $('#sidebar').classList.remove('open');
-  });
-  function closeMobilePanels() {
-    $('#sidebar').classList.remove('open');
-    $('#members-panel').classList.remove('open');
+  // ---------- Mobile navigation and modal panels ----------
+  const navButton = $('#btn-toggle-sidebar');
+  const membersButton = $('#btn-toggle-members');
+  const overlay = $('#mobile-backdrop');
+  function syncMobilePanels() {
+    const app = $('#app');
+    const navOpen = app.classList.contains('nav-open');
+    const membersOpen = app.classList.contains('members-open');
+    const mobile = window.matchMedia('(max-width: 900px)').matches;
+    overlay.hidden = !mobile || !(navOpen || membersOpen);
+    navButton.setAttribute('aria-expanded', String(mobile && navOpen));
+    membersButton.setAttribute('aria-expanded', String(mobile && membersOpen));
+    $('#sidebar').inert = mobile && !navOpen;
+    $('#server-rail').inert = mobile && !navOpen;
+    $('#members-panel').inert = mobile && !membersOpen;
   }
+  function closeMobilePanels() {
+    $('#app').classList.remove('nav-open', 'members-open');
+    syncMobilePanels();
+  }
+  function openMobilePanel(kind) {
+    const app = $('#app');
+    const className = kind === 'nav' ? 'nav-open' : 'members-open';
+    const wasOpen = app.classList.contains(className);
+    app.classList.remove('nav-open', 'members-open');
+    if (!wasOpen) app.classList.add(className);
+    syncMobilePanels();
+    if (!wasOpen) {
+      (kind === 'nav' ? $('#btn-close-sidebar') : $('#btn-close-members')).focus();
+    }
+  }
+  navButton.addEventListener('click', () => openMobilePanel('nav'));
+  membersButton.addEventListener('click', () => openMobilePanel('members'));
+  $('#btn-close-sidebar').addEventListener('click', closeMobilePanels);
+  $('#btn-close-members').addEventListener('click', closeMobilePanels);
+  overlay.addEventListener('click', closeMobilePanels);
+  $('#home-open-nav').addEventListener('click', () => openMobilePanel('nav'));
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMobilePanels();
+  });
+  window.addEventListener('resize', syncMobilePanels);
+  syncMobilePanels();
 
   // ---------- Init ----------
   async function init() {
