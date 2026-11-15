@@ -13,6 +13,7 @@ const { createFriendsRouter } = require('./src/routes/friends');
 const { createDmsRouter } = require('./src/routes/dms');
 const { createAdminRouter } = require('./src/routes/admin');
 const { createMediaRouter } = require('./src/routes/media');
+const { createMessagesRouter } = require('./src/routes/messages');
 const mediaStorage = require('./src/media/s3');
 const { setupSocket } = require('./src/socket');
 
@@ -85,6 +86,7 @@ async function main() {
   app.use('/api/dms', createDmsRouter(db));
   app.use('/api/admin', createAdminRouter(db, io));
   app.use('/api/media', createMediaRouter(db));
+  app.use('/api/messages', createMessagesRouter(db, io));
 
   setupSocket(io, db);
 

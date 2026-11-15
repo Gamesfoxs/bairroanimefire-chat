@@ -177,6 +177,18 @@ async function init() {
     if (!cols.includes('media_id')) run('ALTER TABLE ' + table + ' ADD COLUMN media_id TEXT');
   }
 
+  // Conversations Phase 1: replies, edits and emoji reactions, non-destructive migrations.
+  for (const table of ['messages','dm_messages']) {
+    const cols = all('PRAGMA table_info(' + table + ')').map(c => c.name);
+    if (!cols.includes('reply_to_id')) run('ALTER TABLE ' + table + ' ADD COLUMN reply_to_id TEXT');
+    if (!cols.includes('edited_at')) run('ALTER TABLE ' + table + ' ADD COLUMN edited_at TEXT');
+  }
+  exec("CREATE TABLE IF NOT EXISTS message_reactions (" +
+    "scope_type TEXT NOT NULL, message_id TEXT NOT NULL, user_id TEXT NOT NULL, " +
+    "emoji TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, " +
+    "PRIMARY KEY(scope_type,message_id,user_id,emoji))");
+  exec('CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(scope_type,message_id)');
+
   // SSO columns (idempotent)
   try {
     const cols = all(`PRAGMA table_info(users)`).map((c) => c.name);

@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { verifyToken } = require('../middleware/auth');
+const { replyInfo } = require('../messages/format');
 
 /** userId -> Set of socket ids */
 const onlineUsers = new Map();
@@ -120,6 +121,7 @@ function setupSocket(io, db) {
         const content = String(payload?.content || '').trim();
         const channelId = payload?.channelId;
         const mediaId = typeof payload?.mediaId === 'string' ? payload.mediaId : null;
+        const replyTo = typeof payload?.replyTo === 'string' ? payload.replyTo : null;
         if ((!content && !mediaId) || !channelId) {
           if (typeof ack === 'function') ack({ error: 'Mensagem inválida' });
           return;
@@ -143,6 +145,11 @@ function setupSocket(io, db) {
           return;
         }
 
+        if (replyTo && (!/^[a-zA-Z0-9:_-]{1,100}$/.test(replyTo) ||
+          !db.get('SELECT 1 FROM messages WHERE id=? AND channel_id=?',[replyTo,channelId]))) {
+          if (typeof ack === 'function') ack({error:'Mensagem original não encontrada neste canal'});
+          return;
+        }
         const media = mediaId && db.get('SELECT id,mime,bytes FROM media_uploads WHERE id=? AND owner_id=? AND scope_type=? AND scope_id=? AND status=?',[mediaId,userId,'channel',channelId,'pending']);
         if (mediaId && !media) {
           if (typeof ack === 'function') ack({ error: 'Anexo inválido ou usado' });
@@ -151,8 +158,8 @@ function setupSocket(io, db) {
         const id = uuidv4();
         const created_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
         db.run(
-          `INSERT INTO messages (id, channel_id, author_id, content, created_at, media_id) VALUES (?, ?, ?, ?, ?, ?)`,
-          [id, channelId, userId, content, created_at, mediaId || null]
+          `INSERT INTO messages (id, channel_id, author_id, content, created_at, media_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, channelId, userId, content, created_at, mediaId || null, replyTo]
         );
         if (media) db.run('UPDATE media_uploads SET status=?,message_id=? WHERE id=?',['sent',id,mediaId]);
 
@@ -168,6 +175,10 @@ function setupSocket(io, db) {
           media_id: media?.id || null,
           media_type: media?.mime || null,
           media_size: media?.bytes || null,
+          reply_to_id: replyTo,
+          reply: replyInfo(db,'channel',replyTo,channelId),
+          reactions: [],
+          edited_at: null,
           author_id: author.id,
           author_username: author.username,
           author_display_name: author.display_name,
@@ -190,6 +201,7 @@ function setupSocket(io, db) {
         const content = String(payload?.content || '').trim();
         const dmId = payload?.dmId;
         const mediaId = typeof payload?.mediaId === 'string' ? payload.mediaId : null;
+        const replyTo = typeof payload?.replyTo === 'string' ? payload.replyTo : null;
         if ((!content && !mediaId) || !dmId) {
           if (typeof ack === 'function') ack({ error: 'Mensagem inválida' });
           return;
@@ -209,6 +221,11 @@ function setupSocket(io, db) {
           return;
         }
 
+        if (replyTo && (!/^[a-zA-Z0-9:_-]{1,100}$/.test(replyTo) ||
+          !db.get('SELECT 1 FROM dm_messages WHERE id=? AND dm_channel_id=?',[replyTo,dmId]))) {
+          if (typeof ack === 'function') ack({error:'Mensagem original não encontrada neste PV'});
+          return;
+        }
         const media = mediaId && db.get('SELECT id,mime,bytes FROM media_uploads WHERE id=? AND owner_id=? AND scope_type=? AND scope_id=? AND status=?',[mediaId,userId,'dm',dmId,'pending']);
         if (mediaId && !media) {
           if (typeof ack === 'function') ack({ error: 'Anexo inválido ou usado' });
@@ -217,8 +234,8 @@ function setupSocket(io, db) {
         const id = uuidv4();
         const created_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
         db.run(
-          `INSERT INTO dm_messages (id, dm_channel_id, author_id, content, created_at, media_id) VALUES (?, ?, ?, ?, ?, ?)`,
-          [id, dmId, userId, content, created_at, mediaId || null]
+          `INSERT INTO dm_messages (id, dm_channel_id, author_id, content, created_at, media_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, dmId, userId, content, created_at, mediaId || null, replyTo]
         );
         if (media) db.run('UPDATE media_uploads SET status=?,message_id=? WHERE id=?',['sent',id,mediaId]);
 
@@ -234,6 +251,10 @@ function setupSocket(io, db) {
           media_id: media?.id || null,
           media_type: media?.mime || null,
           media_size: media?.bytes || null,
+          reply_to_id: replyTo,
+          reply: replyInfo(db,'dm',replyTo,dmId),
+          reactions: [],
+          edited_at: null,
           author_id: author.id,
           author_username: author.username,
           author_display_name: author.display_name,

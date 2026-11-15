@@ -134,3 +134,28 @@ Esta etapa reforça o chat existente sem substituir contas, conversas ou mídias
 - Testes de integração com contas de teste e banco isolado cobrem leitura de PV, restrição de acesso, segurança de origem, sinalização Socket.IO e limite de mensagens.
 
 Em desenvolvimento a confirmação vem dos testes de código e serviços. Testes de qualidade em dispositivos reais, TURN para redes restritas e escalabilidade além de grupos pequenos ainda são trabalhos futuros.
+
+
+## Fase 1 — Conversas (15 de novembro de 2026)
+
+- **Responder:** cite mensagens de canais ou PVs; o servidor confirma que a resposta pertence à conversa.
+- **Reações:** 10 emojis rápidos, contagem visível, toque para adicionar ou remover. Só participantes podem reagir.
+- **Editar e apagar:** o autor edita/apaga suas mensagens; dono/moderador também apagam mensagens de canal conforme a permissão. O histórico mostra quando houve edição.
+- **Busca:** encontre palavras no conteúdo do canal ou PV (até 40 resultados); resultados de outras conversas não são expostos.
+- **Áudio:** no compositor há botão de gravar até 90 segundos, parar, ouvir a prévia e só então enviar. O formato depende do MediaRecorder do navegador (WebM, OGG ou MP4), máximo 8 MiB; mídia privada no S3.
+- **Visual:** paleta Fogo Neon alinhada ao site; PV com balões, botões acessíveis no celular e pesquisa em modal.
+- **Segurança:** validação de autoria, participação e escopo de conversa em todos os endpoints, inclusive edição, exclusão, reações e busca.
+
+**Não incluídos nesta entrega:** TURN/SFU, Web Push, pesquisa online de GIF, grupos de PV, status de 24h, cargos avançados, E2EE e apps nativos separados. Todos seguem no roadmap de docs/ESPECIFICACAO.md.
+
+Testes de integração em banco isolado: node tests/phase1-integration.js. Teste do front: node tests/quality-smoke.js. Gravação de voz exige consentimento para microfone e suporte do navegador; deve ser testada em celular real.
+
+
+### Estado do S3 observado em 15/11/2026
+
+A conta S3 configurada retornou AccessDenied para DeleteObject durante a validação.
+A exclusão de mensagens revoga a visualização pelo chat, mas a remoção física
+do objeto pode falhar até que a credencial usada pelo serviço tenha a permissão
+s3:DeleteObject no bucket/prefixo privado. NÃO desative o controle de acesso
+ou torne o bucket público para contornar isso. A disponibilidade de upload variou
+entre chamadas do teste; verifique permissões, logs do provedor e conectividade.

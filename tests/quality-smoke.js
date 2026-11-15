@@ -25,7 +25,7 @@ async function run() {
   assert.equal((css.match(/\{/g)||[]).length,(css.match(/\}/g)||[]).length);
   for (const id of ['voice-quality','attachment-thumb','attachment-state',
     'upload-progress','media-lightbox','media-lightbox-close']) assert(ids.includes(id));
-  assert(html.includes('20261114v8') && sw.includes('20261114v8'));
+  assert(html.includes('20261115v1') && sw.includes('20261115v1'));
   console.log('PASS UI markup + CSS and version selectors');
 
   const env={ mobile:true,saveData:false };
@@ -86,6 +86,12 @@ async function run() {
   assert(src.includes('URL.revokeObjectURL'));
   assert(src.includes('event.clipboardData'));
   assert(src.includes('closeMediaLightbox'));
+  assert(src.includes('replyTo'), 'Reply-to control absent');
+  assert(src.includes('patchMessageReactions'), 'Real-time reactions absent');
+  assert(src.includes('openChatSearch'), 'Search dialog absent');
+  assert(src.includes('toggleVoiceNote'), 'Voice recording absent');
+  assert(html.includes('id="btn-record-voice"'));
+  assert(html.includes('id="chat-search-modal"'));
   console.log('PASS media preview / upload progress / paste and viewer hooks');
 }
 run().catch(err=>{console.error(err);process.exit(1)});

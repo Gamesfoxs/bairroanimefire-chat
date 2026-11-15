@@ -4,8 +4,16 @@ const { authRequired } = require('../middleware/auth');
 const storage = require('../media/s3');
 
 const IMAGE_LIMIT = 8 * 1024 * 1024;
+const AUDIO_LIMIT = 8 * 1024 * 1024;
 const VIDEO_LIMIT = 24 * 1024 * 1024;
-function inspect(data) {
+function inspect(data,kind='file') {
+  // Voice recordings use MediaRecorder. Signature must match a supported audio container.
+  if (kind === 'voice' && data.length >= 12) {
+    if (data.subarray(0,4).toString('ascii')==='OggS') return ['audio/ogg','ogg',AUDIO_LIMIT];
+    if (data.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3]))) return ['audio/webm','webm',AUDIO_LIMIT];
+    if (data.subarray(4,8).toString('ascii')==='ftyp') return ['audio/mp4','m4a',AUDIO_LIMIT];
+    return null;
+  }
   if (data.length >= 8 && data.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return ['image/png','png',IMAGE_LIMIT];
   if (data.length >= 3 && data.subarray(0,3).equals(Buffer.from([255,216,255]))) return ['image/jpeg','jpg',IMAGE_LIMIT];
   if (data.length >= 6 && ['GIF87a','GIF89a'].includes(data.subarray(0,6).toString('ascii'))) return ['image/gif','gif',IMAGE_LIMIT];
@@ -32,8 +40,9 @@ function createMediaRouter(db) {
     if (!canAccess(db,req.user.id,scopeType,scopeId)) return res.status(403).json({error:'Sem acesso a esta conversa'});
     const body=req.body;
     if (!Buffer.isBuffer(body) || body.length===0) return res.status(400).json({error:'Arquivo vazio'});
-    const inspected=inspect(body);
-    if (!inspected) return res.status(415).json({error:'Envie PNG, JPEG, WEBP, GIF, MP4 ou WEBM'});
+    const kind=req.headers['x-baf-media-kind']==='voice'?'voice':'file';
+    const inspected=inspect(body,kind);
+    if (!inspected) return res.status(415).json({error:'Formato não suportado: imagem, vídeo ou áudio de voz'});
     const [mime,ext,limit]=inspected;
     if (body.length>limit) return res.status(413).json({error:'Tamanho máximo: '+(limit/1048576)+' MB'});
     const quota=db.get("SELECT COUNT(*) AS count, COALESCE(SUM(bytes),0) AS total FROM media_uploads WHERE owner_id=? AND created_at>=datetime('now','-1 day')",[req.user.id]);
@@ -58,7 +67,7 @@ function createMediaRouter(db) {
     if (!canAccess(db,req.user.id,media.scope_type,media.scope_id)) return res.status(403).json({error:'Sem acesso'});
     res.setHeader('Cache-Control','private, no-store');
     res.setHeader('Referrer-Policy','no-referrer');
-    res.redirect(302,storage.getUrl(media.s3_key,media.mime.startsWith('video/') ? 600 : 120));
+    res.redirect(302,storage.getUrl(media.s3_key,(media.mime.startsWith('video/') || media.mime.startsWith('audio/')) ? 600 : 120));
   });
   router.use((err,_req,res,next)=>{
     if (err?.type==='entity.too.large') return res.status(413).json({error:'Arquivo excede 24 MB'});
