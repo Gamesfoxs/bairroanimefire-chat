@@ -63,12 +63,12 @@ PWA em português, tema roxo-escuro (`#1a0a2e`), login exclusivo por “Entrar c
 | --- | --- | --- |
 | Servidores | Tem | Criar guilda, ícone emoji, acesso por convite (validade 7 dias, até 30 usos). Só dono/mod cria convite e canal. |
 | Servidor padrão | Tem | Bairro Anime Fire com canais `#geral`, `#anime`, `#jogos` e um canal de voz automático por servidor. |
-| Chat de texto | Tem | Socket.IO, até 2000 caracteres, indicador de digitação, reconexão com banner, limite de 16 mensagens / 10s. |
-| DMs | Tem | Só entre amigos confirmados ou membros do mesmo servidor privado. Contador de não lidas no rail e no título da aba. |
+| Chat de texto | Tem | Socket.IO, até 2000 caracteres, indicador de digitação, reconexão com banner, limite de 16 mensagens / 10s; respostas citadas, reações por emoji, edição e exclusão com permissões. |
+| DMs | Tem | Só entre amigos confirmados ou membros do mesmo servidor privado. Contador de não lidas no rail e no título da aba, respostas, reações e busca restrita aos participantes. |
 | Amigos | Tem | Adicionar por nome de usuário, pedidos pendentes, lista na home. |
 | Presença | Parcial | Online/offline visível para amigos e membros do mesmo servidor privado. |
 | Voz e vídeo | Parcial | WebRTC P2P até 10 pessoas: entrar, mudo, câmera, transmitir tela, qualidade Auto / 720p / 540p / 360p. Áudio com eco e ruído do navegador. Sem gravação no servidor. |
-| Mídia | Tem | PNG, JPEG, WEBP, GIF até 8 MiB; MP4/WEBM até 24 MiB. S3 privado, links temporários, prévia, colar/arrastar, barra de progresso, zoom. Limite 40 envios ou 250 MiB por pessoa / 24h. |
+| Mídia | Tem | PNG, JPEG, WEBP, GIF até 8 MiB; MP4/WEBM até 24 MiB; mensagem de voz gravada no navegador até 90 s / 8 MiB (se suportado). S3 privado, links temporários, prévia, colar/arrastar, barra de progresso, zoom. Limite 40 envios ou 250 MiB por pessoa / 24h. |
 | GIF | Parcial | O botão abre o seletor de arquivo GIF do aparelho — não há pesquisa Tenor/Giphy. |
 | Administração | Tem | Dono: renomear, promover/remover mods, expulsar, banir, desbanir, apagar mensagens, ver auditoria. Mod: convidar, criar canais, expulsar/banir comuns e apagar mensagens. Permissões checadas no servidor. |
 | Segurança | Tem | CSP, X-Frame-Options, Permissions-Policy (câmera, microfone, tela), origem travada no subdomínio, noindex, rate-limit de sinalização WebRTC. |
@@ -183,12 +183,12 @@ Comparativo honesto entre Discord, WhatsApp e o Bairro (site + chat). “Parcial
 | DMs 1:1 | Sim | Sim | Sim, com regra de amizade/servidor | Tem |
 | Grupos de PV | Group DM | Núcleo do app | Não | Falta |
 | Amigos e pedidos | Sim | Contatos | Sim no chat e no site | Tem |
-| Respostas e reações | Sim | Sim | No Chat Global do site; não no PWA do subdomínio | Parcial |
-| Editar / apagar própria msg | Sim | Sim | Admin apaga; autor ainda não edita no chat | Falta |
+| Respostas e reações | Sim | Sim | Agora também no PWA do chat: citação e emoji com contagem, em canal e PV | Tem |
+| Editar / apagar própria msg | Sim | Sim | Autor edita e apaga; dono e moderadores podem apagar conteúdo em canal | Tem |
 | Threads / tópicos | Sim | Não (canais sim) | Não | Falta |
 | Figurinhas e emoji da casa | Sim (Nitro p/ alguns) | Sim | Não no chat | Falta |
 | GIF pesquisável | Tenor | Sim | Só arquivo local | Parcial |
-| Mensagem de voz | Clipes / voz | Núcleo | Áudio no feed; não no composer do chat | Falta |
+| Mensagem de voz | Clipes / voz | Núcleo | Gravação pelo MediaRecorder com prévia e envio privado ao S3, conforme suporte do navegador | Parcial |
 | Enquetes | Sim | Sim | No feed, não no canal/PV | Parcial |
 | Recibo de leitura | Não clássico | Sim (visto) | Não lidas de DM, sem “visto” por mensagem | Parcial |
 | Stories 24h | Não | Status | Fagulhas é outro formato | Falta |
@@ -196,7 +196,7 @@ Comparativo honesto entre Discord, WhatsApp e o Bairro (site + chat). “Parcial
 | Cargos custom + overrides | Muito forte | Admin de grupo | Dono e moderador fixos | Parcial |
 | Moderação avançada | Timeout, AutoMod | Admin / comunidades | Ban, expulsar, auditoria, apagar | Parcial |
 | Bots e comandos `/` | Ecossistema | Pouco | Não | Falta |
-| Busca de mensagens | Sim | Sim | Busca no site, não no histórico do chat | Falta |
+| Busca de mensagens | Sim | Sim | Busca textual simples dentro do canal ou PV, com verificação de acesso; filtros avançados pendentes | Parcial |
 | Push nativo | Sim | Sim | Toasts no site; chat ainda depende da aba aberta | Parcial |
 | E2EE | Só em áudios de PV recentes | Padrão | TLS + S3 privado, sem ponta a ponta | Falta |
 | Mensagens temporárias | Não nativo | Sim | Não | Falta |
@@ -313,15 +313,26 @@ A Fase 0 já está no ar. O MVP de verdade, para o usuário, é fechar as conver
 | 0 | Admin (dono/mod, ban, auditoria) e mídia S3 | Concluído |
 | 0 | Voz, câmera, tela e qualidade no P2P | Concluído |
 | 1 | TURN para redes difíceis e testes reais em dois aparelhos | Em andamento |
-| 1 | Responder, reagir, editar, apagar, menções e push | Pendente |
-| 1 | Mensagem de voz no composer e GIF pesquisável | Pendente |
-| 1 | Unificar tokens de fogo do site com o roxo do chat | Pendente |
+| 1 | Responder, reagir, editar e apagar em canais/PVs | Implementado nesta entrega |
+| 1 | Menções avançadas, pesquisa filtrada e Web Push | Pendente |
+| 1 | Mensagem de voz no composer (MediaRecorder + S3) | Implementado no código; teste em aparelhos reais pendente |
+| 1 | GIF pesquisável | Pendente |
+| 1 | Unificar tokens de fogo do site com o roxo do chat | Parcial: aplicação Fogo Neon nas conversas e pesquisa |
 | 2 | Grupos de PV, visto, presença rica, busca no histórico | Pendente |
 | 2 | Cargos custom, overrides, categorias, timeout e figurinhas | Pendente |
 | 3 | Status 24h, mensagens temporárias, perfil unificado no chat | Pendente |
 | 3 | SFU (LiveKit ou equivalente) e call de grupo estável | Pendente |
 | 4 | E2EE em PVs/grupos, bots/comandos, eventos da guilda | Pendente |
 | 5 | MySQL, Redis, apps nativos do chat, perks do Apoie | Pendente |
+
+### Observação operacional do armazenamento (15/11/2026)
+
+A implementação de áudio e mídia usa URLs privadas do S3, mas a credencial atual
+retornou AccessDenied ao excluir um objeto de teste. O endpoint de aplicação
+já pode revogar a visualização de uma mensagem apagada, porém a exclusão física
+precisa de autorização s3:DeleteObject. Há registro de erro 400 intermitente
+em teste de upload. Não tratar a limpeza física ou a entrega de áudio no celular
+como comprovadas até resolver a permissão e testar em dispositivos reais.
 
 ### Fase 1 — MVP das conversas (agora)
 

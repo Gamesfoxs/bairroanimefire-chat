@@ -58,15 +58,23 @@ async function put(key, data, mime) {
       method: 'PUT', path: objectPath(c,key), headers, timeout: 45000,
     }, res => {
       let responseBytes = 0;
-      res.on('data', chunk => { responseBytes += chunk.length; });
-      res.on('end', () => resolve({ status: res.statusCode, responseBytes }));
+      let responseBody = '';
+      res.on('data', chunk => {
+        responseBytes += chunk.length;
+        if (responseBody.length < 4096) responseBody += chunk.toString('utf8').slice(0,4096-responseBody.length);
+      });
+      res.on('end', () => {
+        // Log only the provider's symbolic error code, never signed requests or credentials.
+        const errorCode = responseBody.match(/<Code>([^<]{1,80})<\/Code>/)?.[1] || null;
+        resolve({ status: res.statusCode, responseBytes, errorCode });
+      });
     });
     req.on('timeout', () => req.destroy(new Error('Tempo de resposta do S3 esgotado')));
     req.on('error', reject);
     req.end(data);
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new Error('O armazenamento S3 rejeitou o envio (' + response.status + ')');
+    throw new Error('O armazenamento S3 rejeitou o envio (' + response.status + (response.errorCode ? ', ' + response.errorCode : '') + ')');
   }
 }
 function getUrl(key, expires=90) {
@@ -92,15 +100,25 @@ async function remove(key) {
   const c=config();
   if (!c) throw new Error('Armazenamento S3 não configurado');
   const headers=signedHeaders(c,'DELETE',key,Buffer.alloc(0),null);
+  headers['content-length']='0';
   const response=await new Promise((resolve,reject)=>{
     const req=https.request({
       protocol:'https:',hostname:c.endpoint.hostname,port:c.endpoint.port || 443,
       method:'DELETE',path:objectPath(c,key),headers,timeout:25000,
-    },res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});
+    },res=>{
+      let body='';
+      res.on('data',chunk=>{if(body.length<4096)body+=chunk.toString('utf8').slice(0,4096-body.length);});
+      res.on('end',()=>{
+        const code=body.match(/<Code>([^<]{1,80})<\/Code>/)?.[1] || '';
+        resolve({status:res.statusCode,code});
+      });
+    });
     req.on('timeout',()=>req.destroy(new Error('Timeout no S3')));
     req.on('error',reject);
     req.end();
   });
-  if (response >= 300 && response !== 404) throw new Error('Falha ao excluir mídia do S3 ('+response+')');
+  if (response.status >= 300 && response.status !== 404) {
+    throw new Error('Falha ao excluir mídia do S3 ('+response.status+(response.code?', '+response.code:'')+')');
+  }
 }
 module.exports={config,makeKey,put,getUrl,remove};

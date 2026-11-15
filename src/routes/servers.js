@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 const { authRequired } = require('../middleware/auth');
+const { enrichMessages } = require('../messages/format');
 
 function createServersRouter(db) {
   function canManage(serverId,userId) {
@@ -66,7 +67,7 @@ function createServersRouter(db) {
 
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const messages = db.all(
-      `SELECT m.id, m.content, m.created_at, m.channel_id, m.media_id, a.mime AS media_type, a.bytes AS media_size,
+      `SELECT m.id, m.content, m.created_at, m.channel_id, m.media_id, m.reply_to_id, m.edited_at, a.mime AS media_type, a.bytes AS media_size,
               u.id AS author_id, u.username AS author_username,
               u.display_name AS author_display_name, u.avatar_color AS author_color
        FROM messages m
@@ -77,7 +78,7 @@ function createServersRouter(db) {
        LIMIT ?`,
       [req.params.channelId, limit]
     );
-    res.json({ messages: messages.reverse() });
+    res.json({ messages: enrichMessages(db,'channel',messages.reverse(),req.user.id) });
   });
 
   router.post('/', authRequired, (req, res) => {

@@ -19,6 +19,12 @@
     pendingMediaFile: null,
     attachmentObjectUrl: null,
     mediaSending: false,
+    replyTo: null,
+    voiceRecorder: null,
+    voiceRecordingStream: null,
+    voiceRecordingTimer: null,
+    voiceRecordingLimit: null,
+    searchContext: null,
     historyRequestId: 0,
     loadingHistoryKey: null,
     bufferedHistoryMessages: [],
@@ -218,6 +224,21 @@
       if (payload?.channelId === state.voiceChannelId && state.localStream) {
         handleVoiceSignal(payload).catch(() => toast('Falha na conexão de voz. Tente sair e entrar.'));
       }
+    });
+    state.socket.on('message:updated', data => {
+      if (state.view === 'channel' && state.activeChannelId === data.scopeId) patchMessageEdited(data);
+    });
+    state.socket.on('dm:updated', data => {
+      if (state.view === 'dm' && state.activeDmId === data.scopeId) patchMessageEdited(data);
+    });
+    state.socket.on('message:reactions', data => {
+      if (state.view === 'channel' && state.activeChannelId === data.scopeId) patchMessageReactions(data);
+    });
+    state.socket.on('dm:reactions', data => {
+      if (state.view === 'dm' && state.activeDmId === data.scopeId) patchMessageReactions(data);
+    });
+    state.socket.on('dm:deleted', ({dmId,messageId}) => {
+      if (state.view === 'dm' && state.activeDmId === dmId) messageElement(messageId)?.remove();
     });
     state.socket.on('message:deleted', ({channelId,messageId}) => {
       if (state.view === 'channel' && state.activeChannelId === channelId) {
@@ -575,6 +596,10 @@
   }
 
   async function openChannel(channelId) {
+    stopVoiceNote(true);
+    clearReply();
+    clearSearchContext();
+    closeChatSearch();
     clearMediaAttachment();
     leaveVoice();
     if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
@@ -600,6 +625,10 @@
   }
 
   async function openDm(dmId, meta) {
+    stopVoiceNote(true);
+    clearReply();
+    clearSearchContext();
+    closeChatSearch();
     clearMediaAttachment();
     leaveVoice();
     if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
@@ -641,6 +670,11 @@
   }
 
   function showHome() {
+    stopVoiceNote(true);
+    clearReply();
+    clearSearchContext();
+    closeChatSearch();
+    $('#btn-chat-search').hidden=true;
     state.historyRequestId++;
     state.loadingHistoryKey = null;
     state.bufferedHistoryMessages = [];
@@ -717,6 +751,7 @@
 
   function showChatView() {
     $('#app').dataset.view = state.view;
+    $('#btn-chat-search').hidden=false;
     $('#btn-toggle-members').hidden = $('#members-panel').classList.contains('hidden');
     $('#voice-view').classList.add('hidden');
     $('#home-view').classList.add('hidden');
@@ -856,9 +891,107 @@
     box.scrollTop = box.scrollHeight;
   }
 
+  const reactionOptions = ['👍','❤️','😂','🔥','😮','😢','👏','🎮','💜','✨'];
+  function messageElement(id) {
+    return $$('.msg',$('#messages')).find(el => el.dataset.id === id);
+  }
+  function activeMessageScope() {
+    if (state.view === 'channel' && state.activeChannelId) return {type:'channel',id:state.activeChannelId};
+    if (state.view === 'dm' && state.activeDmId) return {type:'dm',id:state.activeDmId};
+    return null;
+  }
+  function clearReply() {
+    state.replyTo = null;
+    $('#reply-preview').hidden = true;
+    $('#reply-author').textContent = 'Responder';
+    $('#reply-text').textContent = '';
+  }
+  $('#reply-clear').addEventListener('click', clearReply);
+  function startReply(message) {
+    const scope=activeMessageScope();
+    if(!scope)return;
+    state.replyTo = {id:message.id,type:scope.type,scopeId:scope.id};
+    $('#reply-author').textContent = message.author_display_name || message.author_username || 'Mensagem';
+    $('#reply-text').textContent = message.content || '📎 Anexo';
+    $('#reply-preview').hidden = false;
+    $('#composer-input').focus();
+  }
+  function patchMessageEdited(data) {
+    const el=messageElement(data.messageId);
+    if(!el)return;
+    el._message.content = data.content;
+    el._message.edited_at = data.edited_at;
+    const content=$('.msg-content',el);
+    if(content)content.textContent=data.content;
+    const marker=$('.msg-edited',el);
+    if(marker)marker.hidden=false;
+  }
+  function renderReactionChips(el) {
+    const wrap=$('.msg-reactions',el);
+    if(!wrap)return;
+    wrap.replaceChildren();
+    for(const reaction of (el._message.reactions || [])) {
+      if(!reaction.count)continue;
+      const chip=document.createElement('button');
+      chip.type='button';
+      chip.className='reaction-chip'+(reaction.mine?' mine':'');
+      chip.textContent = reaction.emoji+' '+reaction.count;
+      chip.setAttribute('aria-label',reaction.count+' reações '+reaction.emoji);
+      chip.addEventListener('click',()=>toggleReaction(el._message,reaction.emoji));
+      wrap.appendChild(chip);
+    }
+    wrap.hidden=!wrap.children.length;
+  }
+  function patchMessageReactions(data) {
+    const el=messageElement(data.messageId);
+    if(!el)return;
+    const mine = new Map((el._message.reactions||[]).map(r=>[r.emoji,Boolean(r.mine)]));
+    el._message.reactions=(data.reactions||[]).map(r=>({
+      emoji:r.emoji,count:r.count,mine:mine.get(r.emoji)||false
+    }));
+    renderReactionChips(el);
+  }
+  async function toggleReaction(m,emoji) {
+    const scope=activeMessageScope();
+    if(!scope)return;
+    try {
+      const result=await api('/messages/'+scope.type+'/'+encodeURIComponent(scope.id)+'/'+encodeURIComponent(m.id)+'/react',{
+        method:'POST',body:JSON.stringify({emoji})
+      });
+      const el=messageElement(m.id);
+      if(el) {
+        el._message.reactions=result.reactions;
+        renderReactionChips(el);
+      }
+    } catch(err) {toast(err.message);}
+  }
+  async function editMessage(m) {
+    const scope=activeMessageScope();
+    if(!scope||m.author_id!==state.user.id)return;
+    const content=prompt('Editar mensagem:',m.content||'');
+    if(content===null)return;
+    if(!content.trim()||content.trim().length>2000)return toast('Texto inválido (até 2.000 caracteres)');
+    try {
+      const result=await api('/messages/'+scope.type+'/'+encodeURIComponent(scope.id)+'/'+encodeURIComponent(m.id),{
+        method:'PATCH',body:JSON.stringify({content:content.trim()})
+      });
+      patchMessageEdited(result);
+      toast('Mensagem editada');
+    } catch(err) {toast(err.message);}
+  }
+  async function deleteMessage(m) {
+    const scope=activeMessageScope();
+    if(!scope)return;
+    if(!confirm('Apagar esta mensagem para todos?'))return;
+    try {
+      await api('/messages/'+scope.type+'/'+encodeURIComponent(scope.id)+'/'+encodeURIComponent(m.id),{method:'DELETE'});
+      messageElement(m.id)?.remove();
+    }catch(err){toast(err.message);}
+  }
+
   function buildMessageEl(m) {
     const el = document.createElement('div');
-    el.className = 'msg';
+    el.className = 'msg'+(state.view==='dm'&&m.author_id===state.user.id?' mine':'');
     el.dataset.id = m.id;
     el.innerHTML = `
       <div class="msg-avatar" style="background:${safeColor(m.author_color)}">${escapeHtml(initials(m.author_display_name || m.author_username))}</div>
@@ -870,6 +1003,29 @@
         <div class="msg-content">${escapeHtml(m.content)}</div>
       </div>
     `;
+    el._message=m;
+    if (m.reply) {
+      const quote=document.createElement('button');
+      quote.type='button';
+      quote.className='msg-reply-quote';
+      const author=document.createElement('strong');
+      author.textContent='↩ '+m.reply.author_name;
+      const excerpt=document.createElement('span');
+      excerpt.textContent=m.reply.content || '📎 Anexo';
+      quote.append(author,excerpt);
+      quote.title='Ver mensagem original';
+      quote.addEventListener('click',()=>{
+        const original=messageElement(m.reply.id);
+        if(original){original.scrollIntoView({behavior:'smooth',block:'center'});original.classList.add('msg-highlight');setTimeout(()=>original.classList.remove('msg-highlight'),1700);}
+        else toast('A mensagem original não está neste trecho do histórico');
+      });
+      el.querySelector('.msg-body').insertBefore(quote,el.querySelector('.msg-content'));
+    }
+    const edited=document.createElement('span');
+    edited.className='msg-edited';
+    edited.textContent='(editada)';
+    edited.hidden=!m.edited_at;
+    el.querySelector('.msg-meta').appendChild(edited);
     if (m.media_id && /^[a-f0-9-]{36}$/i.test(m.media_id) && m.media_type) {
       const container = document.createElement('div');
       container.className = 'msg-media';
@@ -890,6 +1046,14 @@
           if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); zoom(); }
         });
         container.appendChild(image);
+      } else if (m.media_type.startsWith('audio/')) {
+        const audio = document.createElement('audio');
+        audio.src=url;
+        audio.controls=true;
+        audio.preload='none';
+        audio.setAttribute('aria-label','Mensagem de voz enviada');
+        container.classList.add('audio-message');
+        container.appendChild(audio);
       } else if (m.media_type.startsWith('video/')) {
         const video = document.createElement('video');
         video.src = url;
@@ -901,20 +1065,44 @@
       }
       el.querySelector('.msg-body').appendChild(container);
     }
-    if (state.view === 'channel' && state.activeServerId && (m.author_id === state.user.id || canModerateCurrentServer())) {
-      const remove = document.createElement('button');
-      remove.type = 'button';
-      remove.className = 'msg-delete';
-      remove.textContent = 'Apagar';
-      remove.setAttribute('aria-label', 'Apagar mensagem');
-      remove.addEventListener('click', async () => {
-        if (!confirm('Apagar esta mensagem para todos?')) return;
-        try {
-          await api('/admin/' + state.activeServerId + '/messages/' + m.id, {method:'DELETE'});
-          el.remove();
-        } catch(err) { toast(err.message); }
-      });
-      el.querySelector('.msg-meta').appendChild(remove);
+    const scope=activeMessageScope();
+    if(scope) {
+      const actions=document.createElement('div');
+      actions.className='msg-actions';
+      function action(label,handler,title) {
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='msg-action';
+        button.textContent=label;
+        button.title=title || label;
+        button.addEventListener('click',handler);
+        actions.appendChild(button);
+        return button;
+      }
+      action('↩ Responder',()=>startReply(el._message),'Responder com citação');
+      const picker=document.createElement('div');
+      picker.className='msg-reaction-picker';
+      picker.hidden=true;
+      for(const emoji of reactionOptions) {
+        const pick=document.createElement('button');
+        pick.type='button';
+        pick.textContent=emoji;
+        pick.setAttribute('aria-label','Reagir com '+emoji);
+        pick.addEventListener('click',()=>{picker.hidden=true;toggleReaction(el._message,emoji);});
+        picker.appendChild(pick);
+      }
+      action('☺ Reagir',()=>{picker.hidden=!picker.hidden;},'Escolher emoji');
+      if(m.author_id===state.user.id) action('✎ Editar',()=>editMessage(el._message));
+      if(m.author_id===state.user.id || (scope.type==='channel' && canModerateCurrentServer())) {
+        action('🗑 Apagar',()=>deleteMessage(el._message));
+      }
+      actions.appendChild(picker);
+      el.querySelector('.msg-body').appendChild(actions);
+      const chips=document.createElement('div');
+      chips.className='msg-reactions';
+      chips.hidden=true;
+      el.querySelector('.msg-body').appendChild(chips);
+      renderReactionChips(el);
     }
     return el;
   }
@@ -926,6 +1114,75 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
   }
+
+  // ---------- Search within the authorized channel or private conversation ----------
+  function closeChatSearch() {
+    $('#chat-search-modal').hidden=true;
+  }
+  function clearSearchContext() {
+    state.searchContext=null;
+    $('#search-context').hidden=true;
+  }
+  function openChatSearch() {
+    if(!activeMessageScope())return;
+    $('#chat-search-modal').hidden=false;
+    $('#chat-search-results').replaceChildren();
+    $('#chat-search-status').textContent='Busque palavras desta conversa, inclusive mensagens antigas.';
+    $('#chat-search-input').value='';
+    $('#chat-search-input').focus();
+  }
+  $('#btn-chat-search').addEventListener('click',openChatSearch);
+  $('#chat-search-close').addEventListener('click',closeChatSearch);
+  $('#chat-search-modal').addEventListener('click',event=>{
+    if(event.target===$('#chat-search-modal'))closeChatSearch();
+  });
+  $('#search-reset').addEventListener('click',()=>{
+    clearSearchContext();
+    refreshCurrentHistory(true).catch(err=>toast(err.message));
+  });
+  $('#chat-search-form').addEventListener('submit',async event=>{
+    event.preventDefault();
+    const scope=activeMessageScope();
+    if(!scope)return;
+    const query=$('#chat-search-input').value.trim();
+    if(query.length<2)return;
+    const output=$('#chat-search-results');
+    output.replaceChildren();
+    $('#chat-search-status').textContent='Pesquisando…';
+    try {
+      const data=await api('/messages/search?scope='+scope.type+
+        '&scope_id='+encodeURIComponent(scope.id)+'&q='+encodeURIComponent(query));
+      const same=activeMessageScope();
+      if(!same||same.type!==scope.type||same.id!==scope.id)return;
+      $('#chat-search-status').textContent=data.messages.length+
+        ' resultado(s) nesta conversa'+(data.messages.length===40?' (limite de 40)':'');
+      if(!data.messages.length)return;
+      for(const message of data.messages) {
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='chat-search-result';
+        const title=document.createElement('strong');
+        title.textContent=(message.author_display_name||message.author_username||'Morador')+
+          ' • '+formatTime(message.created_at);
+        const excerpt=document.createElement('span');
+        excerpt.textContent=message.content.slice(0,260);
+        button.append(title,excerpt);
+        button.addEventListener('click',()=>{
+          const latest=activeMessageScope();
+          if(!latest||latest.type!==scope.type||latest.id!==scope.id)return;
+          closeChatSearch();
+          state.historyRequestId++;
+          state.loadingHistoryKey=null;
+          state.bufferedHistoryMessages=[];
+          state.searchContext={scope:scope.type,scopeId:scope.id,query};
+          $('#search-context-label').textContent='Resultado de: '+query;
+          $('#search-context').hidden=false;
+          renderMessages([message]);
+        });
+        output.appendChild(button);
+      }
+    } catch(err) {$('#chat-search-status').textContent=err.message;}
+  });
 
   // ---------- Image lightbox ----------
   function openMediaLightbox(src,alt) {
@@ -954,6 +1211,8 @@
     state.attachmentObjectUrl = null;
     $('#attachment-thumb').removeAttribute('src');
     $('#attachment-thumb').hidden = true;
+    $('#attachment-audio').removeAttribute('src');
+    $('#attachment-audio').hidden = true;
     $('#attachment-preview').hidden = true;
     $('#attachment-name').textContent = '';
     $('#attachment-state').textContent = 'Pronto para enviar • qualidade original';
@@ -968,25 +1227,100 @@
   }
   function selectMediaFile(file) {
     if (!file) return;
-    const allowed = ['image/jpeg','image/png','image/gif','image/webp','video/mp4','video/webm'];
-    if (!allowed.includes(file.type)) return toast('Use PNG, JPEG, GIF, WEBP, MP4 ou WEBM');
-    const max = file.type.startsWith('image/') ? 8 * 1048576 : 24 * 1048576;
+    const allowed = ['image/jpeg','image/png','image/gif','image/webp','video/mp4','video/webm',
+      'audio/webm','audio/ogg','audio/mp4'];
+    if (!allowed.includes(file.type)) return toast('Use imagem, GIF, vídeo ou áudio de voz');
+    const max = file.type.startsWith('video/') ? 24 * 1048576 : 8 * 1048576;
     if (file.size > max || file.size === 0) {
-      return toast('Limite: imagens e GIFs 8 MB, vídeos 24 MB');
+      return toast('Limite: imagem e áudio 8 MB; vídeo 24 MB');
     }
     clearMediaAttachment();
     state.pendingMediaFile = file;
-    $('#attachment-name').textContent = (file.type.startsWith('video/') ? '🎬 ' : '📎 ') +
+    $('#attachment-name').textContent =
+      (file.type.startsWith('video/') ? '🎬 ' : file.type.startsWith('audio/') ? '🎙️ ' : '📎 ') +
       file.name + ' • ' + (file.size / 1048576).toFixed(1) + ' MB';
     if (file.type.startsWith('image/')) {
       state.attachmentObjectUrl = URL.createObjectURL(file);
       $('#attachment-thumb').src = state.attachmentObjectUrl;
       $('#attachment-thumb').hidden = false;
+    } else if (file.type.startsWith('audio/')) {
+      state.attachmentObjectUrl=URL.createObjectURL(file);
+      $('#attachment-audio').src=state.attachmentObjectUrl;
+      $('#attachment-audio').hidden=false;
     }
     $('#attachment-preview').hidden = false;
   }
+  // A voice note is recorded locally; only the user pressing Enviar uploads it.
+  function resetVoiceButton() {
+    const button=$('#btn-record-voice');
+    button.textContent='🎙️';
+    button.classList.remove('recording');
+    button.setAttribute('aria-pressed','false');
+    button.title='Gravar mensagem de voz';
+  }
+  function stopVoiceNote(discard=false) {
+    const recorder=state.voiceRecorder;
+    if(!recorder)return;
+    recorder._discard=discard;
+    if(recorder.state!=='inactive')recorder.stop();
+  }
+  async function toggleVoiceNote() {
+    if(state.voiceRecorder){stopVoiceNote();return;}
+    if(!activeMessageScope())return toast('Abra um canal de texto ou PV primeiro');
+    if(!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      return toast('Seu navegador não oferece gravação de voz');
+    }
+    let stream;
+    try {
+      stream=await navigator.mediaDevices.getUserMedia({audio:{
+        echoCancellation:true,noiseSuppression:true,autoGainControl:true
+      },video:false});
+      const choices=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'];
+      const selected=choices.find(kind=>window.MediaRecorder.isTypeSupported(kind));
+      const recorder=selected?new MediaRecorder(stream,{mimeType:selected}):new MediaRecorder(stream);
+      const mime=(recorder.mimeType||'').split(';')[0];
+      if(!['audio/webm','audio/mp4','audio/ogg'].includes(mime)) {
+        stream.getTracks().forEach(track=>track.stop());
+        return toast('Formato de gravação não suportado neste aparelho');
+      }
+      const chunks=[];
+      recorder.ondataavailable=event=>{if(event.data?.size)chunks.push(event.data);};
+      recorder.onstop=()=>{
+        clearInterval(state.voiceRecordingTimer);
+        clearTimeout(state.voiceRecordingLimit);
+        stream.getTracks().forEach(track=>track.stop());
+        if(state.voiceRecorder===recorder){state.voiceRecorder=null;state.voiceRecordingStream=null;}
+        resetVoiceButton();
+        if(recorder._discard||!chunks.length)return;
+        const blob=new Blob(chunks,{type:mime});
+        const ext=mime==='audio/mp4'?'m4a':mime==='audio/ogg'?'ogg':'webm';
+        const file=new File([blob],'voz-'+Date.now()+'.'+ext,{type:mime});
+        selectMediaFile(file);
+      };
+      recorder.onerror=()=>{stopVoiceNote(true);toast('Falha na gravação de voz');};
+      state.voiceRecorder=recorder;
+      state.voiceRecordingStream=stream;
+      recorder.start(600);
+      const started=Date.now();
+      const button=$('#btn-record-voice');
+      button.classList.add('recording');
+      button.setAttribute('aria-pressed','true');
+      button.title='Parar gravação (máximo 90 segundos)';
+      button.textContent='⏹ 00:00';
+      state.voiceRecordingTimer=setInterval(()=>{
+        const seconds=Math.floor((Date.now()-started)/1000);
+        button.textContent='⏹ '+String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
+      },1000);
+      state.voiceRecordingLimit=setTimeout(()=>stopVoiceNote(),90000);
+    }catch(err) {
+      if(stream)stream.getTracks().forEach(track=>track.stop());
+      toast(err?.name==='NotAllowedError'?'Autorize o microfone para gravar':'Não foi possível iniciar o microfone');
+    }
+  }
+  $('#btn-record-voice').addEventListener('click',toggleVoiceNote);
+
   $('#btn-attach').addEventListener('click', () => {
-    $('#media-file').accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm';
+    $('#media-file').accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,audio/ogg,audio/webm,audio/mp4';
     $('#media-file').click();
   });
   $('#btn-gif').addEventListener('click', () => {
@@ -1028,6 +1362,7 @@
       xhr.withCredentials = true;
       xhr.timeout = 120000;
       xhr.setRequestHeader('Content-Type','application/octet-stream');
+      if(file.type.startsWith('audio/')) xhr.setRequestHeader('X-BAF-Media-Kind','voice');
       xhr.upload.addEventListener('progress',event => {
         if (!event.lengthComputable) return;
         const progress = Math.round((event.loaded / event.total) * 100);
@@ -1070,6 +1405,8 @@
     const type = state.view === 'channel' ? 'channel' : state.view === 'dm' ? 'dm' : null;
     const id = type === 'channel' ? state.activeChannelId : type === 'dm' ? state.activeDmId : null;
     if (!type || !id) return;
+    const replyTo = state.replyTo?.type===type && state.replyTo.scopeId===id
+      ? state.replyTo.id : null;
     state.mediaSending = true;
     $('#btn-submit-message').disabled = true;
     $('#btn-submit-message').textContent = file ? '…' : '➤';
@@ -1084,9 +1421,10 @@
       }
       await sendSocketMessage(type === 'channel' ? 'message:send' : 'dm:send', {
         ...(type === 'channel' ? {channelId:id} : {dmId:id}),
-        content, ...(mediaId ? {mediaId} : {}),
+        content, ...(mediaId ? {mediaId} : {}), ...(replyTo ? {replyTo} : {}),
       });
       input.value = '';
+      clearReply();
       clearMediaAttachment();
     } catch(err) { toast(err.message,5000); }
     finally {
@@ -1115,6 +1453,11 @@
 
   // ---------- Private WebRTC voice (small guild rooms) ----------
   async function openVoiceChannel(channelId) {
+    stopVoiceNote(true);
+    clearReply();
+    clearSearchContext();
+    closeChatSearch();
+    $('#btn-chat-search').hidden=true;
     state.historyRequestId++;
     state.loadingHistoryKey = null;
     state.bufferedHistoryMessages = [];
@@ -1742,6 +2085,7 @@
       closeMobilePanels();
       closeAdmin();
       closeMediaLightbox();
+      closeChatSearch();
     }
   });
   window.addEventListener('resize', syncMobilePanels);
