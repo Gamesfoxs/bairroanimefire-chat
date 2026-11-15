@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Bairro Anime Fire</title>
-  <link rel="stylesheet" href="/css/style.css?v=20261114v6" />
+  <link rel="stylesheet" href="/css/style.css?v=20261114v8" />
 </head>
 <body>
   <!-- Auth -->
@@ -31,7 +31,7 @@
     <button type="button" class="mobile-backdrop" id="mobile-backdrop" aria-label="Fechar menus" hidden></button>
     <!-- Server rail -->
     <aside class="server-rail" id="server-rail" aria-label="Servidores">
-      <button class="server-btn home active" id="btn-home" title="Início / Amigos" data-view="home">🏠</button>
+      <button class="server-btn home active" id="btn-home" title="Início / Amigos" data-view="home" aria-label="Início e mensagens privadas">🏠<span id="dm-unread-total" class="rail-unread" hidden>0</span></button>
       <div class="rail-sep"></div>
       <div id="server-list"></div>
       <button class="server-btn add" id="btn-add-server" title="Criar servidor">+</button>
@@ -65,6 +65,10 @@
         </div>
         <button type="button" class="icon-btn mobile-only" id="btn-toggle-members" aria-label="Mostrar membros" aria-controls="members-panel" aria-expanded="false" hidden>👥</button>
       </header>
+      <div class="connection-banner" id="connection-banner" role="status" aria-live="polite" hidden>
+        <span aria-hidden="true">☁️</span>
+        <span>Reconectando ao chat… Suas mensagens voltarão quando a conexão for restabelecida.</span>
+      </div>
       <div class="messages" id="messages" role="log" aria-live="polite"></div>
       <div class="typing" id="typing" hidden></div>
       <form class="composer" id="composer" hidden>
@@ -196,14 +200,9 @@
     <p class="media-lightbox-caption">Toque fora ou no ✕ para voltar à conversa</p>
   </div>
 
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js?v=20261114v6"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
-  </script>
+  <script src="/js/app.js?v=20261114v8"></script>
 </body>
 </html>

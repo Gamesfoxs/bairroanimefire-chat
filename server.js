@@ -35,11 +35,31 @@ async function main() {
 
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+  // Restrict executable scripts to our own origin; external media is allowed
+  // only from the configured private S3 endpoint. No inline JavaScript.
+  const mediaOrigin = mediaStorage.config()?.endpoint?.origin || '';
+  const allowedMedia = mediaOrigin ? ' ' + mediaOrigin : '';
+  const contentSecurityPolicy = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:" + allowedMedia,
+    "media-src 'self' blob:" + allowedMedia,
+    "connect-src 'self' https: wss: stun: turn: turns:",
+    "font-src 'self' data:",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ');
   app.use((req, res, next) => {
     if (req.headers.origin && !trustedOrigins.has(req.headers.origin)) {
       return res.status(403).json({ error: 'Origem não autorizada' });
     }
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', contentSecurityPolicy);
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=()');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     if (req.path.startsWith('/api') || req.path.startsWith('/auth')) {

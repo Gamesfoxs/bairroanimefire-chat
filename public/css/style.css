@@ -1029,3 +1029,35 @@ button, input { touch-action: manipulation; }
 @media(prefers-reduced-motion:reduce) {
   .upload-progress-bar, .voice-controls button { transition: none; }
 }
+
+
+/* Professional UX: visible connection state, unread inbox, touch and keyboard. */
+.connection-banner { display:flex; align-items:center; gap:9px; padding:10px 15px;
+  flex-shrink:0; font-size:.81rem; font-weight:700; line-height:1.4;
+  color:#fff1c7; background:#392516; border-bottom:1px solid rgba(253,206,112,.35); }
+.rail-unread { position:absolute; top:-4px; right:-6px; min-width:20px; height:20px; padding:2px 4px;
+  border-radius:20px; color:#fff; background:#db357d; box-shadow:0 0 0 3px #120820;
+  display:inline-flex; align-items:center; justify-content:center; font-size:.64rem; font-weight:850; }
+.server-btn.home { position:relative; overflow:visible; }
+.nav-item.has-unread { font-weight:800; color:#f4d9ff; background:rgba(159,79,234,.12); }
+.dm-unread { display:inline-flex; margin-left:auto; flex:0 0 auto; height:22px; min-width:22px;
+  border-radius:99px; align-items:center; justify-content:center; padding:2px 6px;
+  color:white; background:linear-gradient(145deg,#b757eb,#d941a0);
+  font-size:.71rem; font-weight:850; box-shadow:0 2px 11px rgba(166,74,222,.2); }
+.member-row.member-action { cursor:pointer; min-height:49px; border-radius:10px; }
+.member-row.member-action:hover, .member-row.member-action:focus-visible {
+  color:#fff; background:rgba(157,71,231,.17); outline:1px solid rgba(192,132,252,.35); }
+.member-row.member-action:focus-visible { outline:2px solid #d4a2ff; outline-offset:1px; }
+#btn-submit-message:disabled { cursor:not-allowed; }
+.server-btn:focus-visible,.nav-item:focus-visible,.member-row:focus-visible,
+.composer button:focus-visible,.channel-toolbar button:focus-visible {
+  outline:2px solid #d5a7ff; outline-offset:2px; }
+@media(max-width:900px) {
+  .member-row.member-action { min-height:52px; }
+  .connection-banner { padding:9px 12px; font-size:.74rem; }
+  .nav-item.has-unread { min-height:46px; }
+}
+@media(max-width:420px) {
+  .dm-unread { font-size:.65rem; min-width:20px; }
+  .connection-banner { font-size:.7rem; }
+}

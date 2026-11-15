@@ -14,6 +14,8 @@
     friends: [],
     pending: [],
     dms: [],
+    unreadDms: new Map(),
+    unreadRefreshTimer: null,
     pendingMediaFile: null,
     attachmentObjectUrl: null,
     mediaSending: false,
@@ -54,6 +56,11 @@
     el.hidden = false;
     clearTimeout(el._t);
     el._t = setTimeout(() => { el.hidden = true; }, ms);
+  }
+
+  function safeColor(value) {
+    return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value)
+      ? value : '#7289da';
   }
 
   function initials(name) {
@@ -113,6 +120,8 @@
     updateRealtimeIndicator(false);
     if (state.socket) { state.socket.disconnect(); state.socket = null; }
     state.wasConnected = false;
+    state.unreadDms.clear();
+    updateUnreadIndicator();
     state.historyRequestId++;
     state.loadingHistoryKey = null;
     state.bufferedHistoryMessages = [];
@@ -133,7 +142,10 @@
       const reconnect = state.wasConnected;
       state.wasConnected = true;
       updateRealtimeIndicator(true);
-      if (reconnect) refreshCurrentHistory(true).catch(() => {});
+      if (reconnect) {
+        refreshCurrentHistory(true).catch(() => {});
+        loadDms().catch(() => {});
+      }
       if (state.voiceChannelId && state.localStream) {
         for (const p of state.voicePeers.values()) p.close();
         state.voicePeers.clear();
@@ -169,8 +181,11 @@
       }
     });
 
-    state.socket.on('dm:notify', ({ from }) => {
-      if (state.view !== 'dm') {
+    state.socket.on('dm:notify', ({ dmId, from }) => {
+      if (dmId && state.view === 'dm' && dmId === state.activeDmId && !document.hidden) {
+        markDmRead(dmId).catch(() => {});
+      } else {
+        scheduleUnreadRefresh();
         toast(`💬 Nova DM de ${from.display_name || from.username}`);
       }
     });
@@ -227,6 +242,9 @@
 
   // Atualizado diretamente pela conexão Socket.IO: nunca anuncie "ao vivo" desconectado.
   function updateRealtimeIndicator(connected) {
+    const banner = $('#connection-banner');
+    banner.hidden = connected || !state.user;
+    $('#btn-submit-message').disabled = !connected || state.mediaSending;
     const chip = $('#realtime-chip');
     chip.classList.toggle('connected', Boolean(connected));
     $('#realtime-label').textContent = connected ? 'Ao vivo' : 'Reconectando';
@@ -250,7 +268,7 @@
     const u = state.user;
     const av = $('#me-avatar');
     av.textContent = initials(u.display_name || u.username);
-    av.style.background = u.avatar_color || '#7289da';
+    av.style.background = safeColor(u.avatar_color);
     av.classList.add('online');
     $('#me-name').textContent = u.display_name || u.username;
     updateMeStatus();
@@ -279,7 +297,45 @@
   async function loadDms() {
     const { channels } = await api('/dms');
     state.dms = channels;
+    state.unreadDms = new Map(channels.map(dm => [dm.id,Number(dm.unread_count) || 0]));
+    updateUnreadIndicator();
+    if (state.view === 'home') showHomeSidebarWithDms();
+    else if (state.view !== 'voice') renderChannelSidebar();
   }
+  function updateUnreadIndicator() {
+    const total = [...state.unreadDms.values()].reduce((sum,n) => sum + n,0);
+    const badge = $('#dm-unread-total');
+    badge.hidden = total === 0;
+    badge.textContent = total > 99 ? '99+' : String(total);
+    $('#btn-home').setAttribute('aria-label',total ? 'Início, ' + total + ' mensagens privadas não lidas' : 'Início e mensagens privadas');
+    document.title = total ? '(' + total + ') BairroAnimeFire Chat' : 'BairroAnimeFire Chat';
+  }
+  function decorateDmButton(button,dm) {
+    const count = state.unreadDms.get(dm.id) || 0;
+    if (!count) return;
+    button.classList.add('has-unread');
+    const badge = document.createElement('span');
+    badge.className = 'dm-unread';
+    badge.textContent = count > 99 ? '99+' : String(count);
+    button.appendChild(badge);
+    button.setAttribute('aria-label',(dm.peer_display_name || dm.peer_username) + ', ' + count + ' mensagens não lidas');
+  }
+  function scheduleUnreadRefresh() {
+    clearTimeout(state.unreadRefreshTimer);
+    state.unreadRefreshTimer = setTimeout(() => loadDms().catch(() => {}),250);
+  }
+  async function markDmRead(dmId) {
+    if (state.view !== 'dm' || state.activeDmId !== dmId || document.hidden) return;
+    await api('/dms/' + encodeURIComponent(dmId) + '/read',{method:'POST'});
+    state.unreadDms.set(dmId,0);
+    updateUnreadIndicator();
+    if (state.view === 'dm') renderChannelSidebar();
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && state.view === 'dm' && state.activeDmId) {
+      markDmRead(state.activeDmId).catch(() => {});
+    }
+  });
 
   function renderServerRail() {
     const list = $('#server-list');
@@ -468,6 +524,7 @@
         const dot = document.createElement('span');
         dot.textContent = state.online.has(dm.peer_id) ? '🟢 ' : '⚪ ';
         btn.append(dot, document.createTextNode(dm.peer_display_name || dm.peer_username));
+        decorateDmButton(btn,dm);
         btn.addEventListener('click', () => openDm(dm.id, dm));
         dmSec.appendChild(btn);
       }
@@ -490,7 +547,7 @@
       const isOnline = state.online.has(m.id);
       li.className = 'member-row' + (isOnline ? ' online' : '');
       li.innerHTML = `
-        <div class="avatar" style="background:${m.avatar_color}">${escapeHtml(initials(m.display_name))}</div>
+        <div class="avatar" style="background:${safeColor(m.avatar_color)}">${escapeHtml(initials(m.display_name))}</div>
         <span>${escapeHtml(m.display_name || m.username)}</span>
         <span class="dot" title="${isOnline ? 'Online' : 'Offline'}"></span>
       `;
@@ -500,7 +557,19 @@
         role.textContent = m.role === 'owner' ? '👑 Dono' : '🛡️ Mod';
         li.insertBefore(role, li.querySelector('.dot'));
       }
-      li.addEventListener('dblclick', () => startDmWith(m.id));
+      if (m.id !== state.user.id) {
+        li.classList.add('member-action');
+        li.tabIndex = 0;
+        li.setAttribute('role','button');
+        li.setAttribute('aria-label','Conversar com ' + (m.display_name || m.username));
+        li.addEventListener('click', () => startDmWith(m.id));
+        li.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            startDmWith(m.id);
+          }
+        });
+      }
       list.appendChild(li);
     }
   }
@@ -549,7 +618,10 @@
     if (state.socket) state.socket.emit('dm:join', { dmId });
 
     await refreshCurrentHistory();
-    if (state.view === 'dm' && state.activeDmId === dmId) closeMobilePanels();
+    if (state.view === 'dm' && state.activeDmId === dmId) {
+      closeMobilePanels();
+      markDmRead(dmId).catch(() => {});
+    }
   }
 
   async function startDmWith(userId) {
@@ -621,6 +693,7 @@
         btn.className = 'nav-item';
         const online = state.online.has(dm.peer_id);
         btn.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${online ? 'var(--online)' : 'var(--offline)'}"></span> ${escapeHtml(dm.peer_display_name || dm.peer_username)}`;
+        decorateDmButton(btn,dm);
         btn.addEventListener('click', () => openDm(dm.id, dm));
         dmSec.appendChild(btn);
       }
@@ -634,7 +707,7 @@
       for (const s of state.servers) {
         const btn = document.createElement('button');
         btn.className = 'nav-item';
-        btn.innerHTML = `${s.icon_emoji || '✨'} ${escapeHtml(s.name)}`;
+        btn.textContent = (s.icon_emoji || '✨') + ' ' + s.name;
         btn.addEventListener('click', () => openServer(s.id));
         sSec.appendChild(btn);
       }
@@ -669,7 +742,7 @@
       const li = document.createElement('li');
       const online = state.online.has(f.id);
       li.innerHTML = `
-        <div class="avatar" style="background:${f.avatar_color};width:28px;height:28px;font-size:0.7rem">${escapeHtml(initials(f.display_name))}</div>
+        <div class="avatar" style="background:${safeColor(f.avatar_color)};width:28px;height:28px;font-size:0.7rem">${escapeHtml(initials(f.display_name))}</div>
         <span>${escapeHtml(f.display_name)} <small style="color:var(--text-dim)">@${escapeHtml(f.username)}</small>
         ${online ? '<small style="color:var(--online)"> · online</small>' : ''}</span>
         <button type="button" class="btn-sm">Mensagem</button>
@@ -684,7 +757,7 @@
     for (const p of state.pending) {
       const li = document.createElement('li');
       li.innerHTML = `
-        <div class="avatar" style="background:${p.avatar_color};width:28px;height:28px;font-size:0.7rem">${escapeHtml(initials(p.display_name))}</div>
+        <div class="avatar" style="background:${safeColor(p.avatar_color)};width:28px;height:28px;font-size:0.7rem">${escapeHtml(initials(p.display_name))}</div>
         <span>${escapeHtml(p.display_name)} <small style="color:var(--text-dim)">@${escapeHtml(p.username)}</small></span>
         <button type="button" class="btn-sm">Aceitar</button>
       `;
@@ -788,10 +861,10 @@
     el.className = 'msg';
     el.dataset.id = m.id;
     el.innerHTML = `
-      <div class="msg-avatar" style="background:${m.author_color || '#7289da'}">${escapeHtml(initials(m.author_display_name || m.author_username))}</div>
+      <div class="msg-avatar" style="background:${safeColor(m.author_color)}">${escapeHtml(initials(m.author_display_name || m.author_username))}</div>
       <div class="msg-body">
         <div class="msg-meta">
-          <span class="msg-author" style="color:${m.author_color || 'inherit'}">${escapeHtml(m.author_display_name || m.author_username)}</span>
+          <span class="msg-author" style="color:${safeColor(m.author_color)}">${escapeHtml(m.author_display_name || m.author_username)}</span>
           <span class="msg-time">${formatTime(m.created_at)}</span>
         </div>
         <div class="msg-content">${escapeHtml(m.content)}</div>
@@ -1018,7 +1091,7 @@
     } catch(err) { toast(err.message,5000); }
     finally {
       state.mediaSending = false;
-      $('#btn-submit-message').disabled = false;
+      $('#btn-submit-message').disabled = !state.socket?.connected;
       $('#btn-submit-message').textContent = '➤';
       if (state.pendingMediaFile) {
         $('#attachment-state').textContent = 'Não enviado • toque em enviar para tentar novamente';
@@ -1688,4 +1761,7 @@
   }
 
   init();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
 })();

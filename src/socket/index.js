@@ -27,6 +27,29 @@ function broadcastPresence(io, db) {
 }
 
 function setupSocket(io, db) {
+  // Sliding-window limits per account (across browser tabs).
+  // Prevents burst spam and runaway signaling without retaining message content.
+  const rate = new Map();
+  function rateAllowed(userId,kind,maxEvents,windowMs) {
+    const key = userId + ':' + kind;
+    const now = Date.now();
+    let item = rate.get(key);
+    if (!item || now - item.started >= windowMs) {
+      item = {started:now,count:0};
+      rate.set(key,item);
+    }
+    if (item.count >= maxEvents) return false;
+    item.count++;
+    return true;
+  }
+  const rateCleanup = setInterval(() => {
+    const now = Date.now();
+    for (const [key,item] of rate) {
+      if (now - item.started > 60000) rate.delete(key);
+    }
+  },60000);
+  rateCleanup.unref();
+
   // Rooms are not an authorization boundary: validate membership before joining
   // or sending typing/signaling events, including after reconnects.
   function channelAccess(userId, channelId) {
@@ -90,6 +113,10 @@ function setupSocket(io, db) {
 
     socket.on('message:send', (payload, ack) => {
       try {
+        if (!rateAllowed(userId,'messages',16,10000)) {
+          if (typeof ack === 'function') ack({error:'Muitas mensagens em pouco tempo. Aguarde alguns segundos.'});
+          return;
+        }
         const content = String(payload?.content || '').trim();
         const channelId = payload?.channelId;
         const mediaId = typeof payload?.mediaId === 'string' ? payload.mediaId : null;
@@ -156,6 +183,10 @@ function setupSocket(io, db) {
 
     socket.on('dm:send', (payload, ack) => {
       try {
+        if (!rateAllowed(userId,'messages',16,10000)) {
+          if (typeof ack === 'function') ack({error:'Muitas mensagens em pouco tempo. Aguarde alguns segundos.'});
+          return;
+        }
         const content = String(payload?.content || '').trim();
         const dmId = payload?.dmId;
         const mediaId = typeof payload?.mediaId === 'string' ? payload.mediaId : null;
@@ -226,6 +257,7 @@ function setupSocket(io, db) {
     });
 
     socket.on('typing:start', ({ channelId, dmId } = {}) => {
+      if (!rateAllowed(userId,'typing',12,10000)) return;
       if (channelId && socket.rooms.has(`channel:${channelId}`) && channelAccess(userId, channelId)) {
         socket.to(`channel:${channelId}`).emit('typing:start', {
           channelId, userId, username: socket.user.username,
@@ -274,6 +306,7 @@ function setupSocket(io, db) {
       if (channelId) leaveVoice(channelId);
     });
     socket.on('voice:signal', (payload = {}) => {
+      if (!rateAllowed(userId,'webrtc',160,10000)) return;
       const { channelId, to, type, sdp, candidate } = payload;
       const room = `voice:${channelId}`;
       const isMember = channelId && channelAccess(userId, channelId);
@@ -282,7 +315,7 @@ function setupSocket(io, db) {
       const members = io.sockets.adapter.rooms.get(room);
       if (!members?.has(to) || to === socket.id) return;
       if (type === 'ice' && (!candidate || JSON.stringify(candidate).length > 4096)) return;
-      if (type !== 'ice' && (typeof sdp !== 'string' || sdp.length > 16000)) return;
+      if (type !== 'ice' && (typeof sdp !== 'string' || sdp.length > 64000)) return;
       io.to(to).emit('voice:signal', {
         channelId, from: socket.id, type,
         ...(type === 'ice' ? { candidate } : { sdp })

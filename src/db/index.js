@@ -169,7 +169,8 @@ async function init() {
     'CREATE TABLE IF NOT EXISTS media_uploads (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT NOT NULL, s3_key TEXT NOT NULL, mime TEXT NOT NULL, bytes INTEGER NOT NULL, status TEXT NOT NULL DEFAULT \'pending\', message_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)',
     'CREATE INDEX IF NOT EXISTS idx_media_scope ON media_uploads(scope_type,scope_id)',
     'CREATE TABLE IF NOT EXISTS server_audit (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)',
-    'CREATE INDEX IF NOT EXISTS idx_audit_server ON server_audit(server_id,created_at)'
+    'CREATE INDEX IF NOT EXISTS idx_audit_server ON server_audit(server_id,created_at)',
+    'CREATE TABLE IF NOT EXISTS dm_reads (dm_id TEXT NOT NULL, user_id TEXT NOT NULL, last_read_rowid INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(dm_id,user_id))'
   ].join(';') + ';');
   for (const table of ['messages','dm_messages']) {
     const cols = all('PRAGMA table_info(' + table + ')').map(c => c.name);
