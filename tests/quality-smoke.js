@@ -25,7 +25,7 @@ async function run() {
   assert.equal((css.match(/\{/g)||[]).length,(css.match(/\}/g)||[]).length);
   for (const id of ['voice-quality','attachment-thumb','attachment-state',
     'upload-progress','media-lightbox','media-lightbox-close']) assert(ids.includes(id));
-  assert(html.includes('20261114v6') && sw.includes('20261114v6'));
+  assert(html.includes('20261114v8') && sw.includes('20261114v8'));
   console.log('PASS UI markup + CSS and version selectors');
 
   const env={ mobile:true,saveData:false };

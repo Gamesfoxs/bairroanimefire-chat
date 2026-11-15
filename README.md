@@ -120,3 +120,17 @@ temporários ainda funcionam até expirar. Não trate isso como um cofre de dado
 - **Acessibilidade:** zoom acionável por teclado, interface com adaptação à tela e respeito a preferência de movimento reduzido.
 
 Validação sem navegador: execute node tests/quality-smoke.js. Testes de chamada entre aparelhos reais e largura mobile em navegador físico continuam necessários.
+
+
+## Consolidação profissional (novembro de 2026)
+
+Esta etapa reforça o chat existente sem substituir contas, conversas ou mídias:
+
+- Cabeçalhos Content-Security-Policy, X-Frame-Options e Permissions-Policy, com scripts carregados somente da origem do chat; a inicialização PWA foi transferida para o arquivo JavaScript.
+- Dados de cor dos perfis recebem validação hexadecimal; nomes e ícones de servidor são exibidos como texto. Botões de mensagem nos membros também funcionam por toque e teclado.
+- Mensagens privadas não lidas possuem contadores por conta guardados no SQLite, sincronizados quando a conversa é aberta, com indicador no menu e no título do navegador.
+- Em caso de desconexão, o chat exibe um aviso e bloqueia o envio até a conexão retornar. O histórico já tinha sincronização ao reconectar.
+- Controles moderados de frequência para envio de mensagens, indicador de digitação e negociação WebRTC, mantendo limite de até 10 participantes por sala.
+- Testes de integração com contas de teste e banco isolado cobrem leitura de PV, restrição de acesso, segurança de origem, sinalização Socket.IO e limite de mensagens.
+
+Em desenvolvimento a confirmação vem dos testes de código e serviços. Testes de qualidade em dispositivos reais, TURN para redes restritas e escalabilidade além de grupos pequenos ainda são trabalhos futuros.

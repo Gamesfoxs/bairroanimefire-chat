@@ -15,13 +15,18 @@ function createDmsRouter(db) {
         CASE WHEN dc.user1_id = ? THEN u2.id ELSE u1.id END AS peer_id,
         CASE WHEN dc.user1_id = ? THEN u2.username ELSE u1.username END AS peer_username,
         CASE WHEN dc.user1_id = ? THEN u2.display_name ELSE u1.display_name END AS peer_display_name,
-        CASE WHEN dc.user1_id = ? THEN u2.avatar_color ELSE u1.avatar_color END AS peer_color
+        CASE WHEN dc.user1_id = ? THEN u2.avatar_color ELSE u1.avatar_color END AS peer_color,
+        (SELECT COUNT(*) FROM dm_messages unread
+         WHERE unread.dm_channel_id=dc.id AND unread.author_id != ?
+         AND unread.rowid > COALESCE(
+           (SELECT r.last_read_rowid FROM dm_reads r WHERE r.dm_id=dc.id AND r.user_id=?),0)
+        ) AS unread_count
        FROM dm_channels dc
        INNER JOIN users u1 ON u1.id = dc.user1_id
        INNER JOIN users u2 ON u2.id = dc.user2_id
        WHERE dc.user1_id = ? OR dc.user2_id = ?
        ORDER BY dc.created_at DESC`,
-      [req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id]
+      [req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id]
     );
     res.json({ channels });
   });
@@ -72,6 +77,18 @@ function createDmsRouter(db) {
         peer_color: peer.avatar_color,
       },
     });
+  });
+
+  router.post('/:dmId/read', authRequired, (req,res) => {
+    const dm = db.get('SELECT id FROM dm_channels WHERE id=? AND (user1_id=? OR user2_id=?)',
+      [req.params.dmId,req.user.id,req.user.id]);
+    if (!dm) return res.status(403).json({error:'Sem acesso à conversa'});
+    const current = db.get('SELECT COALESCE(MAX(rowid),0) AS row_no FROM dm_messages WHERE dm_channel_id=?',
+      [dm.id]);
+    db.run('INSERT INTO dm_reads(dm_id,user_id,last_read_rowid) VALUES(?,?,?) '
+      + 'ON CONFLICT(dm_id,user_id) DO UPDATE SET last_read_rowid=MAX(last_read_rowid,excluded.last_read_rowid)',
+      [dm.id,req.user.id,current.row_no]);
+    res.json({ok:true});
   });
 
   router.get('/:dmId/messages', authRequired, (req, res) => {
