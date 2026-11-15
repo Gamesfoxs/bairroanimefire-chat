@@ -15,7 +15,13 @@
     pending: [],
     dms: [],
     pendingMediaFile: null,
+    attachmentObjectUrl: null,
     mediaSending: false,
+    historyRequestId: 0,
+    loadingHistoryKey: null,
+    bufferedHistoryMessages: [],
+    wasConnected: false,
+    videoQuality: localStorage.getItem('baf_chat_video_quality') || 'auto',
     currentAdminServerId: null,
     online: new Set(),
     view: 'home', // home | channel | dm
@@ -106,6 +112,10 @@
     leaveVoice();
     updateRealtimeIndicator(false);
     if (state.socket) { state.socket.disconnect(); state.socket = null; }
+    state.wasConnected = false;
+    state.historyRequestId++;
+    state.loadingHistoryKey = null;
+    state.bufferedHistoryMessages = [];
     $('#app').classList.add('hidden');
     $('#auth-screen').classList.remove('hidden');
   });
@@ -120,7 +130,10 @@
     });
 
     state.socket.on('connect', () => {
+      const reconnect = state.wasConnected;
+      state.wasConnected = true;
       updateRealtimeIndicator(true);
+      if (reconnect) refreshCurrentHistory(true).catch(() => {});
       if (state.voiceChannelId && state.localStream) {
         for (const p of state.voicePeers.values()) p.close();
         state.voicePeers.clear();
@@ -144,12 +157,14 @@
 
     state.socket.on('message:new', (msg) => {
       if (state.view === 'channel' && msg.channel_id === state.activeChannelId) {
+        if (state.loadingHistoryKey === 'channel:' + msg.channel_id) state.bufferedHistoryMessages.push(msg);
         appendMessage(msg);
       }
     });
 
     state.socket.on('dm:new', (msg) => {
       if (state.view === 'dm' && msg.dm_channel_id === state.activeDmId) {
+        if (state.loadingHistoryKey === 'dm:' + msg.dm_channel_id) state.bufferedHistoryMessages.push(msg);
         appendMessage(msg);
       }
     });
@@ -511,9 +526,8 @@
 
     if (state.socket) state.socket.emit('channel:join', { channelId });
 
-    const { messages } = await api(`/servers/channels/${channelId}/messages?limit=80`);
-    renderMessages(messages);
-    closeMobilePanels();
+    await refreshCurrentHistory();
+    if (state.view === 'channel' && state.activeChannelId === channelId) closeMobilePanels();
   }
 
   async function openDm(dmId, meta) {
@@ -534,9 +548,8 @@
     renderChannelSidebar();
     if (state.socket) state.socket.emit('dm:join', { dmId });
 
-    const { messages } = await api(`/dms/${dmId}/messages?limit=80`);
-    renderMessages(messages);
-    closeMobilePanels();
+    await refreshCurrentHistory();
+    if (state.view === 'dm' && state.activeDmId === dmId) closeMobilePanels();
   }
 
   async function startDmWith(userId) {
@@ -556,6 +569,9 @@
   }
 
   function showHome() {
+    state.historyRequestId++;
+    state.loadingHistoryKey = null;
+    state.bufferedHistoryMessages = [];
     closeAdmin();
     clearMediaAttachment();
     leaveVoice();
@@ -703,8 +719,40 @@
   });
 
   // ---------- Messages ----------
-  function renderMessages(messages) {
+  async function refreshCurrentHistory(preserveScroll = false) {
+    const type = state.view;
+    const id = type === 'channel' ? state.activeChannelId : type === 'dm' ? state.activeDmId : null;
+    if (!id) return;
+    const request = ++state.historyRequestId;
+    const key = type + ':' + id;
+    state.loadingHistoryKey = key;
+    state.bufferedHistoryMessages = [];
+    const url = type === 'channel'
+      ? '/servers/channels/' + encodeURIComponent(id) + '/messages?limit=80'
+      : '/dms/' + encodeURIComponent(id) + '/messages?limit=80';
+    try {
+      const result = await api(url);
+      if (request !== state.historyRequestId || state.view !== type
+          || (type === 'channel' ? state.activeChannelId : state.activeDmId) !== id) return;
+      const merged = new Map((result.messages || []).map(message => [message.id,message]));
+      for (const message of state.bufferedHistoryMessages) merged.set(message.id,message);
+      const messages = [...merged.values()].sort((a,b) =>
+        (a.created_at || '').localeCompare(b.created_at || '') || a.id.localeCompare(b.id));
+      state.loadingHistoryKey = null;
+      state.bufferedHistoryMessages = [];
+      renderMessages(messages,preserveScroll);
+    } catch(err) {
+      if (request === state.historyRequestId) {
+        state.loadingHistoryKey = null;
+        state.bufferedHistoryMessages = [];
+        toast('Falha ao atualizar mensagens: ' + err.message);
+      }
+    }
+  }
+  function renderMessages(messages, preserveScroll = false) {
     const box = $('#messages');
+    const previousScroll = box.scrollTop;
+    const wasNearBottom = (box.scrollHeight - box.clientHeight - box.scrollTop) < 110;
     box.innerHTML = '';
     if (!messages.length) {
       box.innerHTML = `<div class="empty-chat"><div class="big">💬</div><p>Nenhuma mensagem ainda. Manda a primeira!</p></div>`;
@@ -722,7 +770,7 @@
       }
       box.appendChild(buildMessageEl(m));
     }
-    box.scrollTop = box.scrollHeight;
+    box.scrollTop = preserveScroll && !wasNearBottom ? previousScroll : box.scrollHeight;
   }
 
   function appendMessage(msg) {
@@ -759,6 +807,15 @@
         image.alt = m.media_type === 'image/gif' ? 'GIF enviado na conversa' : 'Imagem enviada na conversa';
         image.loading = 'lazy';
         image.decoding = 'async';
+        image.tabIndex = 0;
+        image.role = 'button';
+        image.title = 'Ver imagem ampliada';
+        image.setAttribute('aria-label', 'Ampliar imagem enviada');
+        const zoom = () => openMediaLightbox(url, image.alt);
+        image.addEventListener('click', zoom);
+        image.addEventListener('keydown',event => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); zoom(); }
+        });
         container.appendChild(image);
       } else if (m.media_type.startsWith('video/')) {
         const video = document.createElement('video');
@@ -797,13 +854,63 @@
       .replace(/"/g, '&quot;');
   }
 
+  // ---------- Image lightbox ----------
+  function openMediaLightbox(src,alt) {
+    const viewer = $('#media-lightbox');
+    const image = $('#media-lightbox-image');
+    image.src = src;
+    image.alt = alt || 'Imagem ampliada';
+    viewer.hidden = false;
+    $('#media-lightbox-close').focus();
+  }
+  function closeMediaLightbox() {
+    $('#media-lightbox').hidden = true;
+    $('#media-lightbox-image').removeAttribute('src');
+  }
+  $('#media-lightbox-close').addEventListener('click',closeMediaLightbox);
+  $('#media-lightbox').addEventListener('click',event => {
+    if (event.target === $('#media-lightbox')) closeMediaLightbox();
+  });
+
   // ---------- Composer ----------
   // ---------- Media attachments: uploaded directly to private S3 via the API ----------
   function clearMediaAttachment() {
     state.pendingMediaFile = null;
     $('#media-file').value = '';
+    if (state.attachmentObjectUrl) URL.revokeObjectURL(state.attachmentObjectUrl);
+    state.attachmentObjectUrl = null;
+    $('#attachment-thumb').removeAttribute('src');
+    $('#attachment-thumb').hidden = true;
     $('#attachment-preview').hidden = true;
     $('#attachment-name').textContent = '';
+    $('#attachment-state').textContent = 'Pronto para enviar • qualidade original';
+    updateMediaProgress(null);
+  }
+  function updateMediaProgress(percent) {
+    const el = $('#upload-progress');
+    el.hidden = percent === null;
+    const value = Math.max(0,Math.min(100,Number(percent)||0));
+    el.setAttribute('aria-valuenow',String(value));
+    $('#upload-progress-bar').style.width = value + '%';
+  }
+  function selectMediaFile(file) {
+    if (!file) return;
+    const allowed = ['image/jpeg','image/png','image/gif','image/webp','video/mp4','video/webm'];
+    if (!allowed.includes(file.type)) return toast('Use PNG, JPEG, GIF, WEBP, MP4 ou WEBM');
+    const max = file.type.startsWith('image/') ? 8 * 1048576 : 24 * 1048576;
+    if (file.size > max || file.size === 0) {
+      return toast('Limite: imagens e GIFs 8 MB, vídeos 24 MB');
+    }
+    clearMediaAttachment();
+    state.pendingMediaFile = file;
+    $('#attachment-name').textContent = (file.type.startsWith('video/') ? '🎬 ' : '📎 ') +
+      file.name + ' • ' + (file.size / 1048576).toFixed(1) + ' MB';
+    if (file.type.startsWith('image/')) {
+      state.attachmentObjectUrl = URL.createObjectURL(file);
+      $('#attachment-thumb').src = state.attachmentObjectUrl;
+      $('#attachment-thumb').hidden = false;
+    }
+    $('#attachment-preview').hidden = false;
   }
   $('#btn-attach').addEventListener('click', () => {
     $('#media-file').accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm';
@@ -814,28 +921,61 @@
     $('#media-file').click();
   });
   $('#attachment-clear').addEventListener('click', clearMediaAttachment);
-  $('#media-file').addEventListener('change', () => {
-    const file = $('#media-file').files?.[0];
-    if (!file) return;
-    const max = file.type.startsWith('image/') ? 8 * 1024 * 1024 : 24 * 1024 * 1024;
-    if (file.size > max || file.size === 0) {
-      clearMediaAttachment();
-      return toast('Arquivo grande demais: limite 8 MB para imagens/GIFs ou 24 MB para vídeos');
-    }
-    state.pendingMediaFile = file;
-    $('#attachment-name').textContent = '📎 ' + file.name + ' • ' + (file.size / 1048576).toFixed(1) + ' MB';
-    $('#attachment-preview').hidden = false;
+  $('#media-file').addEventListener('change', () => selectMediaFile($('#media-file').files?.[0]));
+  // Paste an image directly from the clipboard; drag and drop files on desktop.
+  $('#composer-input').addEventListener('paste', event => {
+    const file = [...(event.clipboardData?.items || [])]
+      .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+      .map(item => item.getAsFile()).find(Boolean);
+    if (file) { event.preventDefault(); selectMediaFile(file); }
   });
-  async function uploadMedia(file, scopeType, scopeId) {
+  const dropArea = $('.chat-main');
+  dropArea.addEventListener('dragover', event => {
+    if (event.dataTransfer?.types?.includes('Files')) {
+      event.preventDefault();
+      dropArea.classList.add('dragging-file');
+    }
+  });
+  dropArea.addEventListener('dragleave', event => {
+    if (!dropArea.contains(event.relatedTarget)) dropArea.classList.remove('dragging-file');
+  });
+  dropArea.addEventListener('drop', event => {
+    dropArea.classList.remove('dragging-file');
+    if (!event.dataTransfer?.files?.length) return;
+    event.preventDefault();
+    if ($('#composer').hidden) return toast('Abra um canal de texto ou PV para enviar arquivos');
+    selectMediaFile(event.dataTransfer.files[0]);
+  });
+
+  function uploadMedia(file, scopeType, scopeId) {
     const url = '/api/media/upload?scope_type=' + encodeURIComponent(scopeType) + '&scope_id=' + encodeURIComponent(scopeId);
-    const result = await fetch(url, {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/octet-stream'},
-      body: file,
+    return new Promise((resolve,reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST',url);
+      xhr.withCredentials = true;
+      xhr.timeout = 120000;
+      xhr.setRequestHeader('Content-Type','application/octet-stream');
+      xhr.upload.addEventListener('progress',event => {
+        if (!event.lengthComputable) return;
+        const progress = Math.round((event.loaded / event.total) * 100);
+        updateMediaProgress(progress);
+        $('#attachment-state').textContent = 'Enviando ' + progress + '% • arquivo original';
+      });
+      xhr.addEventListener('load',() => {
+        let data;
+        try { data = JSON.parse(xhr.responseText); } catch { data = {}; }
+        if (xhr.status < 200 || xhr.status >= 300) return reject(new Error(data.error || 'Falha ao enviar o arquivo'));
+        if (!data.media?.id) return reject(new Error('Arquivo enviado sem confirmação'));
+        updateMediaProgress(100);
+        $('#attachment-state').textContent = 'Enviado • finalizando mensagem';
+        resolve(data.media.id);
+      });
+      xhr.addEventListener('error',()=>reject(new Error('Falha de conexão durante o upload')));
+      xhr.addEventListener('timeout',()=>reject(new Error('Upload demorou demais. Verifique sua conexão.')));
+      xhr.addEventListener('abort',()=>reject(new Error('Upload cancelado')));
+      updateMediaProgress(0);
+      xhr.send(file);
     });
-    const data = await result.json().catch(() => ({}));
-    if (!result.ok) throw new Error(data.error || 'Falha ao enviar o arquivo');
-    return data.media.id;
   }
   function sendSocketMessage(eventName, payload) {
     return new Promise((resolve,reject) => {
@@ -880,6 +1020,10 @@
       state.mediaSending = false;
       $('#btn-submit-message').disabled = false;
       $('#btn-submit-message').textContent = '➤';
+      if (state.pendingMediaFile) {
+        $('#attachment-state').textContent = 'Não enviado • toque em enviar para tentar novamente';
+        updateMediaProgress(null);
+      }
     }
   });
 
@@ -898,6 +1042,9 @@
 
   // ---------- Private WebRTC voice (small guild rooms) ----------
   async function openVoiceChannel(channelId) {
+    state.historyRequestId++;
+    state.loadingHistoryKey = null;
+    state.bufferedHistoryMessages = [];
     if (state.voiceChannelId !== channelId) leaveVoice();
     if (state.activeChannelId && state.socket) state.socket.emit('channel:leave', { channelId: state.activeChannelId });
     if (state.activeDmId && state.socket) state.socket.emit('dm:leave', { dmId: state.activeDmId });
@@ -951,6 +1098,69 @@
     }
     syncVideoGrid();
   }
+
+  // Responsive capture quality: prioritize clarity without saturating mobile uplinks.
+  const videoPresets = {
+    high: { width: 1280, height: 720, fps: 24, bitrate: 1700000, label: 'HD 720p' },
+    balanced: { width: 960, height: 540, fps: 24, bitrate: 850000, label: '540p equilibrado' },
+    data: { width: 640, height: 360, fps: 15, bitrate: 380000, label: '360p econômico' },
+  };
+  function currentVideoPreset() {
+    if (videoPresets[state.videoQuality]) return videoPresets[state.videoQuality];
+    const mobile = window.matchMedia('(max-width: 720px)').matches;
+    return navigator.connection?.saveData
+      ? videoPresets.data : mobile ? videoPresets.balanced : videoPresets.high;
+  }
+  function renderVideoQualityHint() {
+    const preset = currentVideoPreset();
+    $('#voice-quality-hint').textContent = state.videoQuality === 'auto'
+      ? 'Automático: ' + preset.label + (navigator.connection?.saveData ? ' • economia de dados ativa' : '')
+      : 'Selecionado: ' + preset.label + ' • ajuste conforme a conexão';
+  }
+  async function applyPeerVideoQuality(pc) {
+    const sender = pc?._videoSender;
+    if (!sender || !sender.getParameters || !sender.setParameters) return;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings?.length) return;
+      const target = currentVideoPreset();
+      params.encodings[0].maxBitrate = state.videoMode === 'screen'
+        ? Math.min(2400000, Math.round(target.bitrate * 1.45)) : target.bitrate;
+      params.degradationPreference = state.videoMode === 'screen' ? 'maintain-resolution' : 'balanced';
+      await sender.setParameters(params);
+    } catch(err) {
+      console.warn('Bitrate adjustment unsupported by browser:', err.message);
+    }
+  }
+  async function applyLiveVideoQuality() {
+    const track = state.videoStream?.getVideoTracks()[0];
+    if (track && track.readyState === 'live' && state.videoMode === 'camera') {
+      const p = currentVideoPreset();
+      try {
+        await track.applyConstraints({
+          width: { ideal:p.width }, height: { ideal:p.height }, frameRate: { ideal:p.fps, max:30 }
+        });
+      } catch(err) {
+        console.warn('Camera cannot change resolution live:',err.message);
+        toast('Câmera: seu aparelho não permite essa resolução');
+      }
+    }
+    await Promise.all([...state.voicePeers.values()].map(applyPeerVideoQuality));
+    renderVideoQualityHint();
+  }
+  const videoQualitySelect = $('#voice-quality');
+  videoQualitySelect.value = Object.prototype.hasOwnProperty.call(videoPresets,state.videoQuality) || state.videoQuality === 'auto'
+    ? state.videoQuality : 'auto';
+  state.videoQuality = videoQualitySelect.value;
+  renderVideoQualityHint();
+  videoQualitySelect.addEventListener('change',() => {
+    state.videoQuality = videoQualitySelect.value;
+    localStorage.setItem('baf_chat_video_quality',state.videoQuality);
+    applyLiveVideoQuality().catch(() => toast('Não foi possível ajustar a qualidade'));
+  });
+  window.addEventListener('resize',() => {
+    if (state.videoQuality === 'auto') renderVideoQualityHint();
+  });
 
   function createVoicePeer(socketId) {
     if (state.voicePeers.has(socketId)) return state.voicePeers.get(socketId);
@@ -1037,6 +1247,7 @@
       }
     };
     state.voicePeers.set(socketId, pc);
+    applyPeerVideoQuality(pc).catch(() => {});
     return pc;
   }
 
@@ -1193,10 +1404,20 @@
         if (!navigator.mediaDevices?.getDisplayMedia) {
           return toast('Seu navegador não suporta transmissão de tela. A câmera funciona no celular.');
         }
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        const profile = currentVideoPreset();
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: Math.max(1280, profile.width) }, frameRate: { ideal: profile.fps } },
+          audio: false
+        });
       } else {
+        const profile = currentVideoPreset();
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 540 } },
+          video: {
+            facingMode: 'user',
+            width: { ideal:profile.width },
+            height: { ideal:profile.height },
+            frameRate: { ideal:profile.fps,max:30 }
+          },
           audio: false
         });
       }
@@ -1232,6 +1453,7 @@
       });
       if (previous) previous.getTracks().forEach(t => t.stop());
       updateLocalVideo();
+      await Promise.all([...state.voicePeers.values()].map(applyPeerVideoQuality));
       toast(mode === 'screen' ? '🖥️ Transmissão iniciada' : '📹 Câmera ligada');
     } catch (err) {
       stream?.getTracks().forEach(t => t.stop());
@@ -1446,6 +1668,7 @@
     if (event.key === 'Escape') {
       closeMobilePanels();
       closeAdmin();
+      closeMediaLightbox();
     }
   });
   window.addEventListener('resize', syncMobilePanels);

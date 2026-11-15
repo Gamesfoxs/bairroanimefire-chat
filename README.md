@@ -109,3 +109,14 @@ proxy_request_buffering off somente nessa rota.
 
 Cuidado: mídia compartilhada não é criptografada de ponta a ponta, e links
 temporários ainda funcionam até expirar. Não trate isso como um cofre de dados.
+
+
+## Melhorias de qualidade e experiência
+
+- **Câmera:** escolha Automática, HD 720p, Equilibrada 540p ou Economia de dados 360p nas salas de voz. O modo Automático favorece qualidade no computador, equilíbrio no celular e economia se a conexão estiver marcada para reduzir dados. A resolução e o bitrate são limites desejados, não garantias de qualidade em toda rede.
+- **Áudio:** mantém cancelamento de eco, supressão de ruído e controle de ganho do navegador. A chamada é P2P/WebRTC; sem servidor TURN, a conexão pode falhar entre redes restritas.
+- **Anexos:** prévia de imagem/GIF, barra de upload, envio por colar ou arrastar arquivo e zoom de fotos. Os arquivos são enviados ao S3 sem recompressão pelo frontend, respeitando os limites de 8 MiB por imagem/GIF e 24 MiB por vídeo.
+- **Conversas:** sincronização ao reconectar; mensagens novas recebidas durante o carregamento são mescladas e deduplicadas. Respostas tardias da conversa anterior são descartadas.
+- **Acessibilidade:** zoom acionável por teclado, interface com adaptação à tela e respeito a preferência de movimento reduzido.
+
+Validação sem navegador: execute node tests/quality-smoke.js. Testes de chamada entre aparelhos reais e largura mobile em navegador físico continuam necessários.

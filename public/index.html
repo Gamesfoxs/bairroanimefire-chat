@@ -11,7 +11,7 @@
   <link rel="icon" href="/icons/icon-192.png" />
   <link rel="apple-touch-icon" href="/icons/icon-192.png" />
   <title>Bairro Anime Fire</title>
-  <link rel="stylesheet" href="/css/style.css?v=20261114v5" />
+  <link rel="stylesheet" href="/css/style.css?v=20261114v6" />
 </head>
 <body>
   <!-- Auth -->
@@ -74,8 +74,15 @@
         <div class="composer-inner">
           <input id="composer-input" type="text" maxlength="2000" autocomplete="off" placeholder="Mensagem..." />
           <div id="attachment-preview" class="attachment-preview" hidden>
-            <span id="attachment-name" class="attachment-name"></span>
+            <img id="attachment-thumb" alt="Prévia do anexo" hidden />
+            <div class="attachment-details">
+              <span id="attachment-name" class="attachment-name"></span>
+              <span id="attachment-state" class="attachment-state">Pronto para enviar • qualidade original</span>
+            </div>
             <button type="button" id="attachment-clear" aria-label="Remover anexo">✕</button>
+          </div>
+          <div id="upload-progress" class="upload-progress" hidden role="progressbar" aria-label="Enviando mídia" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="upload-progress-bar" class="upload-progress-bar"></div>
           </div>
         </div>
         <button type="submit" class="btn-send" id="btn-submit-message" aria-label="Enviar">➤</button>
@@ -132,6 +139,16 @@
           </div>
         </div>
         <ul id="voice-peers" class="voice-peers" aria-label="Participantes da chamada"></ul>
+        <div class="call-quality">
+          <label for="voice-quality">Qualidade do vídeo</label>
+          <select id="voice-quality" aria-label="Qualidade do vídeo">
+            <option value="auto">Automática (recomendada)</option>
+            <option value="high">HD 720p</option>
+            <option value="balanced">Equilibrada 540p</option>
+            <option value="data">Economia de dados 360p</option>
+          </select>
+          <span id="voice-quality-hint" class="call-quality-hint">Ajusta vídeo conforme o dispositivo e a conexão.</span>
+        </div>
         <div class="voice-controls" role="group" aria-label="Controles da chamada">
           <button type="button" id="voice-join" class="btn-primary">🎙️ Entrar na chamada</button>
           <button type="button" id="voice-mute" class="voice-secondary hidden">🔇 Silenciar</button>
@@ -173,10 +190,16 @@
     </section>
   </div>
 
+  <div id="media-lightbox" class="media-lightbox" hidden role="dialog" aria-modal="true" aria-label="Visualizador de imagens">
+    <button type="button" class="media-lightbox-close" id="media-lightbox-close" aria-label="Fechar imagem">✕</button>
+    <img id="media-lightbox-image" alt="Imagem ampliada" />
+    <p class="media-lightbox-caption">Toque fora ou no ✕ para voltar à conversa</p>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/js/app.js?v=20261114v5"></script>
+  <script src="/js/app.js?v=20261114v6"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
